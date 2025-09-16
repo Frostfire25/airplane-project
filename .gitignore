@@ -1,0 +1,102 @@
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+pip-wheel-metadata/
+.Python
+
+# Byte-compiled / optimized / DLL files
+*.so
+*.dylib
+
+# Distribution / packaging
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+cover/
+coverage.xml
+htmlcov/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+python-version
+
+# pipenv
+Pipfile.lock
+
+# pyenv-virtualenv
+python_env/
+
+# VS Code
+.vscode/
+
+# JetBrains IDEs
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# dotenv
+.env
+
+# logs
+*.log
+
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+# Ignore the local airplane DB (client/airplane.db)
+client/airplane.db
+
+# Credentials
+credentials.json
+
+# Log
+request.log
+requests.log
