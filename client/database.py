@@ -12,7 +12,6 @@ import sqlite3
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DB_NAME = os.getenv('DB_NAME', 'airplane.db')
 
-
 @dataclass
 class NearestPlane:
 	id: str
@@ -66,7 +65,7 @@ def create_database(path: t.Optional[t.Union[str, Path]] = None) -> Path:
 			)
 			"""
 		)
-		created = datetime.datetime.utcnow().isoformat()
+		created = datetime.datetime.now(datetime.timezone.utc).isoformat()
 		cur.execute(
 			"INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
 			("created_at", created),
@@ -209,6 +208,43 @@ def create_nearestplane(
 		conn.close()
 
 
+def upsert_nearestplane(
+	id: str,
+	latitude: float,
+	longitude: float,
+	icao24: str,
+	callsign: t.Optional[str],
+	velocity: t.Optional[float],
+	last_conact: float,
+	updateRow: float,
+	arrivalAirport: t.Optional[str] = None,
+	departureAirport: t.Optional[str] = None,
+	distance: t.Optional[float] = None,
+	path: t.Optional[t.Union[str, Path]] = None,
+) -> NearestPlane:
+	"""Insert or replace a NearestPlane row and return the resulting object.
+
+	Uses SQLite's INSERT OR REPLACE to act as an upsert. Returns the stored
+	NearestPlane object.
+	"""
+	p = ensure_nearestplane_table(path)
+	conn = sqlite3.connect(str(p))
+	try:
+		cur = conn.cursor()
+		cur.execute(
+			"""
+			INSERT OR REPLACE INTO NearestPlane
+			(id, latitude, longitude, icao24, callsign, velocity, last_conact, updateRow, arrivalAirport, departureAirport, distance)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			""",
+			(id, latitude, longitude, icao24, callsign, velocity, last_conact, updateRow, arrivalAirport, departureAirport, distance),
+		)
+		conn.commit()
+		return get_nearestplane_by_id(id, p)
+	finally:
+		conn.close()
+
+
 def drop_nearestplane_table(path: t.Optional[t.Union[str, Path]] = None) -> None:
 	"""Drop the NearestPlane table if it exists. Use with caution.
 
@@ -237,6 +273,8 @@ __all__ = [
 	"ensure_nearestplane_table",
 	"get_nearestplane_by_id",
 	"create_nearestplane",
+	"upsert_nearestplane",
 	"drop_nearestplane_table",
 ]
+
 

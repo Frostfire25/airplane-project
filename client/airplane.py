@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 from database import *
 from opensky import *
 from utils import *
+import typing as t
+import time
 
 def get_closest_flight_to_position(
     client_id: str,
@@ -11,7 +13,8 @@ def get_closest_flight_to_position(
     longitude: float,
     box: float,
     buffer: int,
-) -> t.Union["Flight", "ErrorResponse"]:
+    delay: int = 5,
+) -> t.Union[tuple["Flight", "State"], "ErrorResponse"]:
     """Find the closest Flight to a position.
 
     Procedure:
@@ -48,7 +51,7 @@ def get_closest_flight_to_position(
     checked_icao = set()
     for rank in range(len(states)):
         # Wait for the buffer period
-        # time.sleep(buffer)
+        time.sleep(delay)
 
         s = find_closest_state(states, latitude, longitude, rank)
         if s is None:
@@ -75,7 +78,8 @@ def get_closest_flight_to_position(
         # prefer flight that has both departure and arrival airports
         for f in flights:
             if f.estDepartureAirport and f.estArrivalAirport:
-                return f
+                # return both Flight and the State we queried
+                return (f, s)
 
     # fallback: return the closest available Flight from the nearest state
     nearest_state = find_closest_state(states, latitude, longitude, 0)
@@ -84,7 +88,7 @@ def get_closest_flight_to_position(
         if last:
             flights_or_error = get_aircraft_flights(token, nearest_state.icao24, int(max(0, last - (buffer*1000))), int(last + (buffer*1000)))
             if not isinstance(flights_or_error, ErrorResponse) and flights_or_error:
-                return flights_or_error[0]
+                return (flights_or_error[0], nearest_state)
 
     return ErrorResponse(message="no flight found matching criteria", code=None)
 

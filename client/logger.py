@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 LOG_PATH = os.path.join(os.path.dirname(__file__), "request.log")
@@ -27,7 +27,7 @@ def _get_logger() -> logging.Logger:
         if need_header:
             try:
                 with open(LOG_PATH, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"timestamp": datetime.utcnow().isoformat() + "Z", "event": "log_started"}, ensure_ascii=False) + "\n")
+                    f.write(json.dumps({"timestamp": datetime.now(timezone.utc).isoformat() + "Z", "event": "log_started"}, ensure_ascii=False) + "\n")
             except Exception:
                 # best-effort: ignore header write failures
                 pass
@@ -64,7 +64,7 @@ def log_api_call(url: str, params: Optional[Dict[str, Any]] = None, success: boo
     """
     logger = _get_logger()
     entry = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         "url": url,
         "params": _sanitize(params or {}),
         "success": bool(success),
