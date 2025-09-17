@@ -94,9 +94,14 @@ Thumbs.db
 # Ignore the local airplane DB (client/airplane.db)
 client/airplane.db
 
+# Ignore local client env file
+client/.env
+
 # Credentials
 credentials.json
 
 # Log
 request.log
 requests.log
+
+*.env
