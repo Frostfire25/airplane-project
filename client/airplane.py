@@ -65,8 +65,8 @@ def get_closest_flight_to_position(
             # no time info, skip
             continue
 
-        begin = int(last - (buffer*1000))
-        end = int(last)
+        begin = last - (buffer*1000)
+        end = last
 
         flights_or_error = get_aircraft_flights(token, s.icao24, begin, end)
         print(flights_or_error)
