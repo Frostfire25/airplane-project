@@ -34,6 +34,7 @@ from opensky import *
 from utils import create_position_identifier
 import typing as t
 from airplane import *
+from matrix import cal as matrix_cal
 from dateutil.tz import gettz
 from atexit import register as atexit_register
 import signal
@@ -47,6 +48,23 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 base_dir = Path(__file__).resolve().parent
 env_path = base_dir / '.env'
 load_dotenv(dotenv_path=env_path)
+
+# Basic network connectivity check. Attempts a short TCP connect to a well-known
+# public DNS server (8.8.8.8:53). If this check fails the process exits with
+# a clear message so the operator knows networking is required for OpenSky calls.
+def _network_available(host: str = "8.8.8.8", port: int = 53, timeout: float = 3.0) -> bool:
+	import socket
+	try:
+		with socket.create_connection((host, port), timeout=timeout):
+			return True
+	except Exception:
+		return False
+
+if not _network_available():
+	print("Network check failed: no network connectivity detected (tried 8.8.8.8:53).\nPlease ensure the machine has network access before starting this program.")
+	# Use a clean exit code to indicate failure to start due to missing network
+	import sys as _sys
+	_sys.exit(1)
 
 # Matrix timezone: read from .env (TIMEZONE or TZ) or default to America/New_York
 MATRIX_TIMEZONE = os.getenv('TIMEZONE') or os.getenv('TZ') or 'America/New_York'
@@ -145,7 +163,8 @@ def _matrix_clock_run():
 
 	now_local = datetime.datetime.now(MATRIX_ZONE)
 	ts = now_local.strftime("%H:%M:%S")
-	print(f"[{MATRIX_TIMEZONE}]: {ts} {arrivalAirport} {departureAirport} {icao} {distance_mi:<.2f}mi")
+	# Delegate display to matrix helper which will fallback to console if no hardware
+	matrix_cal(ts, arrivalAirport, departureAirport, icao, distance_mi)
 
 def shutdown_scheduler(signum=None, frame=None):
 	# Idempotent shutdown handler invoked by signals or manually.

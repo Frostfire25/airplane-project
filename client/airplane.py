@@ -146,14 +146,3 @@ def get_closest_flight_to_position(
                 return ErrorResponse(message="no flight found matching criteria (cached)", code=None)
 
     return ErrorResponse(message="no flight found matching criteria", code=None)
-
-# Run project
-
-# get_closest_flight_to_position(
-#   OPENSKY_CLIENT_ID,
-#   OPENSKY_CLIENT_SECRET,
-#   LATITUDE,
-#   LONGITUDE,
-#   BOX,
-#   BUFFER,
-# )
