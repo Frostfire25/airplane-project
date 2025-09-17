@@ -139,12 +139,13 @@ def _matrix_clock_run():
 
 	# Use Python conditional expression and guard for None
 	icao = nearest_plane.icao24 if nearest_plane and nearest_plane.icao24 else ""
+	distance_mi = distance_miles(nearest_plane.latitude, nearest_plane.longitude, LATITUDE, LONGITUDE) if nearest_plane.latitude and nearest_plane.longitude else ""
 	arrivalAirport = nearest_plane.arrivalAirport if nearest_plane and nearest_plane.arrivalAirport else ""
 	departureAirport = nearest_plane.departureAirport if nearest_plane and nearest_plane.departureAirport else ""
 
 	now_local = datetime.datetime.now(MATRIX_ZONE)
 	ts = now_local.strftime("%H:%M:%S")
-	print(f"[{MATRIX_TIMEZONE}]: {ts} {arrivalAirport} {departureAirport} {icao}")
+	print(f"[{MATRIX_TIMEZONE}]: {ts} {arrivalAirport} {departureAirport} {icao} {distance_mi:<.2f}mi")
 
 def shutdown_scheduler(signum=None, frame=None):
 	# Idempotent shutdown handler invoked by signals or manually.
