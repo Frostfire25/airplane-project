@@ -1,6 +1,30 @@
 # rgbmatrix is optional for headless environments. Commented out to allow
 # importing this module without the hardware library installed.
 # from rgbmatrix import RGBMatrix, RGBMatrixOptions
+import os
+import time as _time
+from pathlib import Path
+from dotenv import load_dotenv as _load_dotenv
+
+# Load .env early and set TZ before importing other modules that might
+# import tzlocal. This helps avoid tzlocal's offset-mismatch UserWarning.
+try:
+	_base_dir = Path(__file__).resolve().parent
+	_env_file = _base_dir / '.env'
+	_load_dotenv(dotenv_path=_env_file)
+	_env_tz = os.getenv('TZ') or os.getenv('TIMEZONE')
+	if _env_tz:
+		os.environ['TZ'] = _env_tz
+		try:
+			if hasattr(_time, 'tzset'):
+				_time.tzset()
+		except Exception:
+			pass
+except Exception:
+	# If early dotenv load fails for any reason, continue; later code will
+	# still attempt to load .env again.
+	pass
+
 import datetime
 from pathlib import Path
 import os
@@ -10,9 +34,11 @@ from opensky import *
 from utils import create_position_identifier
 import typing as t
 from airplane import *
-from zoneinfo import ZoneInfo
+from dateutil.tz import gettz
 from atexit import register as atexit_register
 import signal
+import sys
+import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.executors.pool import ThreadPoolExecutor
 
@@ -22,6 +48,9 @@ base_dir = Path(__file__).resolve().parent
 env_path = base_dir / '.env'
 load_dotenv(dotenv_path=env_path)
 
+# Matrix timezone: read from .env (TIMEZONE or TZ) or default to America/New_York
+MATRIX_TIMEZONE = os.getenv('TIMEZONE') or os.getenv('TZ') or 'America/New_York'
+MATRIX_ZONE = gettz(MATRIX_TIMEZONE) or gettz('UTC')
 # Get OpenSky credentials from environment (do not log secrets)
 OPENSKY_CLIENT_ID = os.getenv('OPENSKY_CLIENT_ID')
 OPENSKY_CLIENT_SECRET = os.getenv('OPENSKY_CLIENT_SECRET')
@@ -33,6 +62,7 @@ BOX = float(os.getenv('BOX', '0'))  # Box size in degrees
 BUFFER = int(os.getenv('BUFFER', '5'))  # Buffer time in seconds
 DELAY_FLIGHTS_API_SECONDS = int(os.getenv('DELAY_FLIGHTS_API_SECONDS', '5'))
 MATRIX_SCHEDULE_SECONDS = int(os.getenv('MATRIX_SCHEDULE_SECONDS', '60'))
+GET_FLIGHT_CACHE_TTL_MILLIS = int(os.getenv('GET_FLIGHT_CACHE_TTL_MILLIS', 86400000))
 
 # Initialize or get the path to the sqlite database
 AIRPLANE_DB = ensure_database()
@@ -75,9 +105,12 @@ def _map_flight_to_nearestplane(flight, state=None) -> dict:
 executors = {"default": ThreadPoolExecutor(max_workers=4)}
 sched = BackgroundScheduler(executors=executors)
 
+# Event to block main thread; set on shutdown to exit cleanly
+stop_event = threading.Event()
 
 def _closest_flight_run():
 	"""Perform one OpenSky poll and persist the nearest plane to the DB."""
+	print("Starting to find the closest flight.")
 	try:
 		# Call the orchestrator which returns either (Flight, State) or ErrorResponse
 		res = get_closest_flight_to_position(
@@ -88,6 +121,7 @@ def _closest_flight_run():
 			BOX,
 			BUFFER,
 			DELAY_FLIGHTS_API_SECONDS,
+			GET_FLIGHT_CACHE_TTL_MILLIS
 		)
 		if isinstance(res, ErrorResponse):
 			print(f"OpenSky orchestrator returned error: {res}")
@@ -101,13 +135,43 @@ def _closest_flight_run():
 		print(f"Exception in _perform_run: {exc}")
 
 def _matrix_clock_run():
-    now_est = datetime.datetime.now(ZoneInfo("America/New_York"))
-    ts = now_est.strftime("%H:%M:%S")
-    print(f"MATRIX time (EST): {ts}")
+	nearest_plane = get_nearestplane_by_id(ID)
+
+	# Use Python conditional expression and guard for None
+	icao = nearest_plane.icao24 if nearest_plane and nearest_plane.icao24 else ""
+	arrivalAirport = nearest_plane.arrivalAirport if nearest_plane and nearest_plane.arrivalAirport else ""
+	departureAirport = nearest_plane.departureAirport if nearest_plane and nearest_plane.departureAirport else ""
+
+	now_local = datetime.datetime.now(MATRIX_ZONE)
+	ts = now_local.strftime("%H:%M:%S")
+	print(f"[{MATRIX_TIMEZONE}]: {ts} {arrivalAirport} {departureAirport} {icao}")
 
 def shutdown_scheduler(signum=None, frame=None):
+	# Idempotent shutdown handler invoked by signals or manually.
 	try:
-		sched.shutdown(wait=True)
+		if stop_event.is_set():
+			return
+		print("Shutting down...")
+		# Don't block waiting for currently running jobs; prefer prompt exit.
+		try:
+			sched.shutdown(wait=False)
+		except Exception:
+			pass
+		# Try to remove any pending jobs to avoid new runs
+		try:
+			sched.remove_all_jobs()
+		except Exception:
+			pass
+		# signal the main thread to exit
+		try:
+			stop_event.set()
+		except Exception:
+			pass
+		# Exit the process; if called from a signal handler this will raise SystemExit.
+		try:
+			sys.exit(0)
+		except Exception:
+			pass
 	except Exception as e:
 		print(f"Error shutting down scheduler: {e}")
 
@@ -119,8 +183,32 @@ signal.signal(signal.SIGTERM, shutdown_scheduler)
 
 if __name__ == "__main__":
 	"""Start APScheduler with two interval jobs: OpenSky polling and matrix time."""
-	sched.add_job(_closest_flight_run, "interval", minutes=OPENSKY_POLL_SCHEDULE_MINUTES, id="opensky_poll", max_instances=1, coalesce=True)
+	# Schedule the OpenSky poll to run immediately and then every N minutes.
+	# Use a timezone-aware next_run_time matching the scheduler timezone so
+	# APScheduler interprets the timestamp correctly on start.
+	now = datetime.datetime.now(tz=sched.timezone)
+	sched.add_job(
+		_closest_flight_run,
+		"interval",
+		minutes=OPENSKY_POLL_SCHEDULE_MINUTES,
+		id="opensky_poll",
+		max_instances=1,
+		coalesce=True,
+		replace_existing=True,
+		next_run_time=now,
+	)
 	sched.add_job(_matrix_clock_run, "interval", seconds=MATRIX_SCHEDULE_SECONDS, id="matrix_time", max_instances=1, coalesce=True)
 	sched.start()	
 	print("Scheduler started (APScheduler). Ctrl-C to exit.")
+	#_closest_flight_run()
+	try:
+		# Use a short sleep loop instead of a single blocking wait so that
+		# KeyboardInterrupt is raised promptly on Windows/PowerShell when
+		# the user presses Ctrl-C. stop_event will be set by signal handlers.
+		while not stop_event.is_set():
+			_time.sleep(0.5)
+	except (KeyboardInterrupt, SystemExit):
+		print("Shutting down...")
+		shutdown_scheduler()
+		sys.exit(0)
 
