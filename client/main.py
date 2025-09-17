@@ -34,7 +34,7 @@ from opensky import *
 from utils import create_position_identifier
 import typing as t
 from airplane import *
-from matrix import cal as matrix_cal
+from matrix import *
 from dateutil.tz import gettz
 from atexit import register as atexit_register
 import signal
@@ -92,6 +92,8 @@ ID = create_position_identifier(LATITUDE, LONGITUDE)
 # Scheduler configuration from env
 OPENSKY_POLL_SCHEDULE_MINUTES = int(os.getenv('OPENSKY_POLL_SCHEDULE_MINUTES', '5'))
 
+# Initialize the 64x64 RGB MAtrix
+matrix, canvas, font = init_matrix()
 
 def _map_flight_to_nearestplane(flight, state=None) -> dict:
 	"""Map a Flight object to the NearestPlane fields.
@@ -153,18 +155,21 @@ def _closest_flight_run():
 		print(f"Exception in _perform_run: {exc}")
 
 def _matrix_clock_run():
-	nearest_plane = get_nearestplane_by_id(ID)
+    global matrix, canvas, font
+    nearest_plane = get_nearestplane_by_id(ID)
 
-	# Use Python conditional expression and guard for None
-	icao = nearest_plane.icao24 if nearest_plane and nearest_plane.icao24 else ""
-	distance_mi = distance_miles(nearest_plane.latitude, nearest_plane.longitude, LATITUDE, LONGITUDE) if nearest_plane.latitude and nearest_plane.longitude else ""
-	arrivalAirport = nearest_plane.arrivalAirport if nearest_plane and nearest_plane.arrivalAirport else ""
-	departureAirport = nearest_plane.departureAirport if nearest_plane and nearest_plane.departureAirport else ""
+    # Use Python conditional expression and guard for None
+    icao = nearest_plane.icao24 if nearest_plane and nearest_plane.icao24 else ""
+    distance_mi = distance_miles(nearest_plane.latitude, nearest_plane.longitude, LATITUDE, LONGITUDE) if nearest_plane and nearest_plane.latitude and nearest_plane.longitude else ""
+    arrivalAirport = nearest_plane.arrivalAirport if nearest_plane and nearest_plane.arrivalAirport else ""
+    departureAirport = nearest_plane.departureAirport if nearest_plane and nearest_plane.departureAirport else ""
 
-	now_local = datetime.datetime.now(MATRIX_ZONE)
-	ts = now_local.strftime("%H:%M:%S")
-	# Delegate display to matrix helper which will fallback to console if no hardware
-	matrix_cal(ts, arrivalAirport, departureAirport, icao, distance_mi)
+    now_local = datetime.datetime.now(MATRIX_ZONE)
+    ts = now_local.strftime("%H:%M:%S")
+    # Delegate display to matrix helper which will fallback to console if no hardware
+    result = cal(ts, arrivalAirport, departureAirport, icao, distance_mi, matrix, canvas, font)
+    if result:
+        matrix, canvas, font = result
 
 def shutdown_scheduler(signum=None, frame=None):
 	# Idempotent shutdown handler invoked by signals or manually.

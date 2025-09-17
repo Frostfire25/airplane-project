@@ -10,6 +10,7 @@ options.chain_length = 1
 options.parallel = 1
 options.hardware_mapping = 'regular'
 options.pwm_lsb_nanoseconds = 130
+options.disable_hardware_pulsing = True  # Add this line
 
 matrix = RGBMatrix(options=options)
 canvas = matrix.CreateFrameCanvas()
