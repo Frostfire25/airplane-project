@@ -1,4 +1,6 @@
 from typing import Optional, Tuple
+import os
+import threading
 
 try:
     from rgbmatrix import RGBMatrix, RGBMatrixOptions, graphics
@@ -6,81 +8,145 @@ try:
 except Exception:
     _HAVE_RGB = False
 
-def init_matrix():
+
+def _available_font_paths() -> list:
+    base = os.path.dirname(__file__)
+    candidates = [
+        os.path.join(base, "fonts", "7x13.bdf"),
+        os.path.join(base, "fonts", "6x13.bdf"),
+        os.path.join(base, "fonts", "5x8.bdf"),
+    ]
+    # Add some common system locations (may not be BDFs, but harmless to try)
+    candidates.append("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+    return [p for p in candidates if os.path.isfile(p)]
+
+
+def init_matrix() -> Optional[Tuple[RGBMatrix, object, object]]:
+    """Initialize and return (matrix, canvas, font) or None on failure."""
     if not _HAVE_RGB:
         return None
     try:
         options = RGBMatrixOptions()
-        options.rows = 64
+        # Adjust these to match your panel/HAT
+        options.rows = 32
         options.cols = 64
         options.chain_length = 1
         options.parallel = 1
         options.hardware_mapping = 'regular'
+        # Some Pi HATs and panels need tuning; these are safe defaults
         options.pwm_lsb_nanoseconds = 130
         options.disable_hardware_pulsing = True
+
         matrix = RGBMatrix(options=options)
         canvas = matrix.CreateFrameCanvas()
         font = graphics.Font()
-        # Try to load a font shipped with the project if available, otherwise skip
-        try:
-            font.LoadFont("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
-        except Exception:
+
+        for path in _available_font_paths():
             try:
-                # fallback to bundled font path used in many demos
-                font.LoadFont("./fonts/7x13.bdf")
+                font.LoadFont(path)
+                break
             except Exception:
-                # If font loading fails, set to None and use graphics default behaviour
-                font = None
+                # try next candidate
+                continue
+
+        # If font.LoadFont never succeeded, keep font as None to trigger fallback
+        if not hasattr(font, 'LoadFont'):
+            font = None
+
         return (matrix, canvas, font)
     except Exception:
-        # If any matrix init fails, mark as unavailable
         return None
 
 
-def cal(timestr: str, arrival: str, departure: str, icao: str, distance_mi: float, matrix, canvas, font):
-    """Display the supplied information on the RGB matrix or print to console.
+# Module-level state and lock to allow safe reuse across threads
+_state_lock = threading.Lock()
+_state = {"matrix": None, "canvas": None, "font": None}
 
-    Args:
-        timestr: formatted time string (e.g. HH:MM:SS)
-        arrival: arrival airport string or empty
-        departure: departure airport string or empty
-        icao: aircraft icao24 code or empty
-        distance_mi: numeric distance in miles (may be float or empty-string)
+
+def cal(timestr: str,
+    arrival: str,
+    departure: str,
+    icao: str,
+    distance_mi: float) -> None:
+    """Draw the supplied information to the RGB matrix (if available) and return
+    the (matrix, canvas, font) triple to reuse on subsequent calls.
+
+    Returns the (matrix, canvas, font) tuple which the caller should pass back
+    to avoid re-initializing hardware on every call.
     """
-    text = f"{timestr} {arrival} {departure} {icao} {distance_mi:.2f}mi" if isinstance(distance_mi, (int, float)) else f"{timestr} {arrival} {departure} {icao} {distance_mi}"
+    line1 = f"{timestr}"
+    line2 = f"{arrival} {departure}".strip() or "-"
+    if isinstance(distance_mi, (int, float)):
+        line3 = f"{icao} {distance_mi:.2f}mi"
+    else:
+        line3 = f"{icao} {distance_mi}"
 
     if not _HAVE_RGB:
-        # No hardware lib present — fallback to console
-        print(text)
+        # No hardware — fallback to console output
+        print(line1)
+        print(line2)
+        print(line3)
         return
 
-    # Lazy init
-    if matrix is None:
-        init_res = init_matrix()
-        if not init_res:
-            print(text)
-            return
-        matrix, canvas, font = init_res
+    # Use a lock for init/draw so concurrent scheduler threads don't race
+    with _state_lock:
+        if _state["matrix"] is None or _state["canvas"] is None:
+            init_res = init_matrix()
+            if not init_res:
+                print("Matrix init failed; printing to console:")
+                print(line1)
+                print(line2)
+                print(line3)
+                return
+            m, c, f = init_res
+            _state["matrix"] = m
+            _state["canvas"] = c
+            _state["font"] = f
 
-    try:
-        # Clear canvas and draw text
-        canvas.Clear()
-        if font is not None:
+        try:
+            canvas = _state["canvas"]
+            font = _state["font"]
+            canvas.Clear()
             color = graphics.Color(255, 255, 0)
-            # Simple multi-line layout if text is long
-            graphics.DrawText(canvas, font, 1, 10, color, timestr)
-            graphics.DrawText(canvas, font, 1, 20, color, f"{arrival} {departure}")
-            graphics.DrawText(canvas, font, 1, 30, color, f"{icao} {distance_mi:.2f}mi" if isinstance(distance_mi, (int, float)) else f"{icao} {distance_mi}")
-        else:
-            # No font loaded — just try drawing raw text at a single position
-            graphics.DrawText(canvas, graphics.Font(), 1, 10, graphics.Color(255, 255, 0), text)
-        
-        # Swap and update the display buffer
-        matrix.SwapOnVSync(canvas)
-        # Create a new canvas for the next frame
-        return matrix, matrix.CreateFrameCanvas(), font
-    except Exception as e:
-        # If anything goes wrong with hardware drawing, fallback to console
-        print(f"Matrix error: {str(e)}")
-        print(text)
-        return matrix, canvas, font
+
+            if font is not None:
+                graphics.DrawText(canvas, font, 1, 10, color, line1)
+                graphics.DrawText(canvas, font, 1, 20, color, line2)
+                graphics.DrawText(canvas, font, 1, 30, color, line3)
+            else:
+                fallback_font = graphics.Font()
+                try:
+                    graphics.DrawText(canvas, fallback_font, 1, 10, color, f"{line1} {line2} {line3}")
+                except Exception:
+                    print(line1)
+                    print(line2)
+                    print(line3)
+                    return
+
+            # Swap to show the frame
+            _state["canvas"] = _state["matrix"].SwapOnVSync(canvas)
+        except Exception as e:
+            print(f"Matrix error: {e}")
+            print(line1)
+            print(line2)
+            print(line3)
+            return
+
+
+def shutdown() -> None:
+    """Shutdown the matrix hardware if it was initialized."""
+    with _state_lock:
+        try:
+            if _state["matrix"] is not None:
+                # Best-effort: clear display
+                try:
+                    _state["canvas"].Clear()
+                except Exception:
+                    pass
+                # There is no explicit close API on the python binding; drop refs
+                _state["matrix"] = None
+                _state["canvas"] = None
+                _state["font"] = None
+        except Exception:
+            pass
+

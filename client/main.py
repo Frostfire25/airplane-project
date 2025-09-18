@@ -34,7 +34,7 @@ from opensky import *
 from utils import create_position_identifier
 import typing as t
 from airplane import *
-from matrix import *
+from matrix import cal, shutdown as matrix_shutdown
 from dateutil.tz import gettz
 from atexit import register as atexit_register
 import signal
@@ -92,8 +92,8 @@ ID = create_position_identifier(LATITUDE, LONGITUDE)
 # Scheduler configuration from env
 OPENSKY_POLL_SCHEDULE_MINUTES = int(os.getenv('OPENSKY_POLL_SCHEDULE_MINUTES', '5'))
 
-# Initialize the 64x64 RGB MAtrix
-matrix, canvas, font = init_matrix()
+# Matrix hardware is managed inside `matrix.py`. Call `cal(...)` to display and
+# `matrix.shutdown()` during process shutdown.
 
 def _map_flight_to_nearestplane(flight, state=None) -> dict:
 	"""Map a Flight object to the NearestPlane fields.
@@ -190,6 +190,11 @@ def shutdown_scheduler(signum=None, frame=None):
 		# signal the main thread to exit
 		try:
 			stop_event.set()
+		except Exception:
+			pass
+		# Try to shutdown matrix hardware if present
+		try:
+			matrix_shutdown()
 		except Exception:
 			pass
 		# Exit the process; if called from a signal handler this will raise SystemExit.
