@@ -8,6 +8,62 @@ try:
 except Exception:
     _HAVE_RGB = False
 
+# --- Common static colors (20) ---
+# Define as RGB tuples so they are safe even if rgbmatrix/graphics isn't available.
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+RED = (255, 0, 0)
+LIME = (0, 255, 0)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+CYAN = (0, 255, 255)
+MAGENTA = (255, 0, 255)
+SILVER = (192, 192, 192)
+GRAY = (128, 128, 128)
+MAROON = (128, 0, 0)
+OLIVE = (128, 128, 0)
+GREEN = (0, 128, 0)
+PURPLE = (128, 0, 128)
+TEAL = (0, 128, 128)
+NAVY = (0, 0, 128)
+ORANGE = (255, 165, 0)
+PINK = (255, 192, 203)
+BROWN = (165, 42, 42)
+GOLD = (255, 215, 0)
+
+# Convenient mapping by name
+COLORS = {
+    'WHITE': WHITE,
+    'BLACK': BLACK,
+    'RED': RED,
+    'LIME': LIME,
+    'BLUE': BLUE,
+    'YELLOW': YELLOW,
+    'CYAN': CYAN,
+    'MAGENTA': MAGENTA,
+    'SILVER': SILVER,
+    'GRAY': GRAY,
+    'MAROON': MAROON,
+    'OLIVE': OLIVE,
+    'GREEN': GREEN,
+    'PURPLE': PURPLE,
+    'TEAL': TEAL,
+    'NAVY': NAVY,
+    'ORANGE': ORANGE,
+    'PINK': PINK,
+    'BROWN': BROWN,
+    'GOLD': GOLD,
+}
+
+# If graphics is available, build graphics.Color versions for direct use
+GRAPHICS_COLORS = {}
+if _HAVE_RGB:
+    try:
+        for name, (r, g, b) in COLORS.items():
+            GRAPHICS_COLORS[name] = graphics.Color(r, g, b)
+    except Exception:
+        # Ignore if graphics.Color isn't behaving as expected; callers can fall back
+        GRAPHICS_COLORS = {}
 
 def _available_font_paths() -> list:
     base = os.path.dirname(__file__)
@@ -18,11 +74,13 @@ def _available_font_paths() -> list:
     ]
     # Add some common system locations (may not be BDFs, but harmless to try)
     candidates.append("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
-    return [p for p in candidates if os.path.isfile(p)]
+    # Return candidates without checking filesystem existence so the loader
+    # can attempt to load them directly.
+    return candidates
 
 
-def init_matrix() -> Optional[Tuple[RGBMatrix, object, object]]:
-    """Initialize and return (matrix, canvas, font) or None on failure."""
+def init_matrix() -> Optional[Tuple[RGBMatrix, object, object, object, object]]:
+    """Initialize and return (matrix, canvas, font_large, font_medium, font_small) or None on failure."""
     if not _HAVE_RGB:
         return None
     try:
@@ -39,21 +97,30 @@ def init_matrix() -> Optional[Tuple[RGBMatrix, object, object]]:
 
         matrix = RGBMatrix(options=options)
         canvas = matrix.CreateFrameCanvas()
-        font = graphics.Font()
-        font.LoadFont("fonts/6x9.bdf")
 
-        # If font.LoadFont never succeeded, keep font as None to trigger fallback
-        if not hasattr(font, 'LoadFont'):
-            font = None
+        base = os.path.dirname(__file__)
+        def _try_load(filename: str):
+            path = os.path.join(base, 'fonts', filename)
+            try:
+                f = graphics.Font()
+                f.LoadFont(path)
+                return f
+            except Exception:
+                return None
 
-        return (matrix, canvas, font)
+        # Medium is required per request: fonts/6x9.bdf
+        font_large = _try_load('7x13.bdf')    # large (best-effort)
+        font_medium = _try_load('6x9.bdf')    # medium (requested)
+        font_small = _try_load('4x6.bdf')     # small
+
+        return (matrix, canvas, font_large, font_medium, font_small)
     except Exception:
         return None
 
 
 # Module-level state and lock to allow safe reuse across threads
 _state_lock = threading.Lock()
-_state = {"matrix": None, "canvas": None, "font": None}
+_state = {"matrix": None, "canvas": None, "font_large": None, "font_medium": None, "font_small": None}
 
 
 def cal(timestr: str,
@@ -69,15 +136,13 @@ def cal(timestr: str,
     """
     line1 = f"{timestr}"
     line2 = f"{arrival} {departure}".strip() or "-"
-    line3 = f"{icao}"
-    line4 = f"{distance_mi}mi"
+    line3 = f"{icao} {distance_mi:0.2f} mi"
 
     if not _HAVE_RGB:
         # No hardware — fallback to console output
         print(line1)
         print(line2)
         print(line3)
-        print(line4)
         return
 
     # Use a lock for init/draw so concurrent scheduler threads don't race
@@ -89,49 +154,42 @@ def cal(timestr: str,
                 print(line1)
                 print(line2)
                 print(line3)
-                print(line4)
                 return
-            m, c, f = init_res
+            m, c, fl, fm, fs = init_res
             _state["matrix"] = m
             _state["canvas"] = c
-            _state["font"] = f
+            _state["font_large"] = fl
+            _state["font_medium"] = fm
+            _state["font_small"] = fs
 
         try:
             canvas = _state["canvas"]
-            font = _state["font"]
+            f_large = _state.get("font_large")
+            f_med = _state.get("font_medium")
+            f_small = _state.get("font_small")
             canvas.Clear()
 
             # Draw a white border around the frame. Prefer DrawLine (fast) and
             # fall back to SetPixel loops if DrawLine isn't available on this
             # graphics binding. Determine width/height from canvas or matrix if
             # possible, otherwise fall back to common defaults.
-            border_color = graphics.Color(255, 255, 255)
             # sensible defaults matching the init options
             w, h = 64, 64
             
             # Draw the four edge lines
-            graphics.DrawLine(canvas, 0, 0, w - 1, 0, border_color)
-            graphics.DrawLine(canvas, 0, h - 1, w - 1, h - 1, border_color)
-            graphics.DrawLine(canvas, 0, 0, 0, h - 1, border_color)
-            graphics.DrawLine(canvas, w - 1, 0, w - 1, h - 1, border_color)
+            graphics.DrawLine(canvas, 0, 0, w - 1, 0, GRAPHICS_COLORS.get('WHITE'))
+            graphics.DrawLine(canvas, 0, h - 1, w - 1, h - 1, GRAPHICS_COLORS.get('WHITE'))
+            graphics.DrawLine(canvas, 0, 0, 0, h - 1, GRAPHICS_COLORS.get('WHITE'))
+            graphics.DrawLine(canvas, w - 1, 0, w - 1, h - 1, GRAPHICS_COLORS.get('WHITE'))
             
 
             color = graphics.Color(255, 255, 0)
 
-            if font is not None:
-                graphics.DrawText(canvas, font, 4, 10, color, line1)
-                graphics.DrawText(canvas, font, 4, 20, color, line2)
-                graphics.DrawText(canvas, font, 4, 30, color, line3)
-                graphics.DrawText(canvas, font, 4, 40, color, line4)
-            else:
-                fallback_font = graphics.Font()
-                try:
-                    graphics.DrawText(canvas, fallback_font, 1, 10, color, f"{line1} {line2} {line3}")
-                except Exception:
-                    print(line1)
-                    print(line2)
-                    print(line3)
-                    return
+            # Draw using large/medium/small fonts with graceful fallbacks
+            # Line positions chosen to avoid the 1px border
+            graphics.DrawText(canvas, f_large, 4, 12, color, line1)
+            graphics.DrawText(canvas, f_med, 4, 24, color, line2)
+            graphics.DrawText(canvas, f_small, 4, 36, color, line3)
 
             # Swap to show the frame
             _state["canvas"] = _state["matrix"].SwapOnVSync(canvas)
@@ -156,7 +214,9 @@ def shutdown() -> None:
                 # There is no explicit close API on the python binding; drop refs
                 _state["matrix"] = None
                 _state["canvas"] = None
-                _state["font"] = None
+                _state["font_large"] = None
+                _state["font_medium"] = None
+                _state["font_small"] = None
         except Exception:
             pass
 
