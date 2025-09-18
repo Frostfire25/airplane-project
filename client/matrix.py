@@ -58,7 +58,7 @@ COLORS = {
 # If graphics is available, build graphics.Color versions for direct use
 GRAPHICS_COLORS = {}
 # Opacity multiplier (0.0 - 1.0) to darken colors; 1.0 = full brightness.
-OPACITY = 0.7
+OPACITY = 1.0
 
 def _apply_opacity(rgb: tuple, opacity: float) -> tuple:
     """Return an (r,g,b) tuple scaled by opacity and clamped to 0-255."""
@@ -89,11 +89,13 @@ def init_matrix() -> Optional[Tuple[RGBMatrix, object, object, object, object]]:
         options.rows = 64
         options.cols = 64
         options.chain_length = 1
+        options.brightness = 50  # 0-100
         options.parallel = 1
         options.hardware_mapping = 'regular'
         # Some Pi HATs and panels need tuning; these are safe defaults
         options.pwm_lsb_nanoseconds = 130
         options.disable_hardware_pulsing = True
+        options.gpio_slowdown=2
 
         matrix = RGBMatrix(options=options)
         canvas = matrix.CreateFrameCanvas()
