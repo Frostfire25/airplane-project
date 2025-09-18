@@ -57,26 +57,26 @@ COLORS = {
 
 # If graphics is available, build graphics.Color versions for direct use
 GRAPHICS_COLORS = {}
+# Opacity multiplier (0.0 - 1.0) to darken colors; 1.0 = full brightness.
+OPACITY = 0.7
+
+def _apply_opacity(rgb: tuple, opacity: float) -> tuple:
+    """Return an (r,g,b) tuple scaled by opacity and clamped to 0-255."""
+    try:
+        o = max(0.0, min(1.0, float(opacity)))
+    except Exception:
+        o = 1.0
+    r, g, b = rgb
+    return (max(0, min(255, int(r * o))), max(0, min(255, int(g * o))), max(0, min(255, int(b * o))))
+
 if _HAVE_RGB:
     try:
         for name, (r, g, b) in COLORS.items():
-            GRAPHICS_COLORS[name] = graphics.Color(r, g, b)
+            rr, gg, bb = _apply_opacity((r, g, b), OPACITY)
+            GRAPHICS_COLORS[name] = graphics.Color(rr, gg, bb)
     except Exception:
         # Ignore if graphics.Color isn't behaving as expected; callers can fall back
         GRAPHICS_COLORS = {}
-
-def _available_font_paths() -> list:
-    base = os.path.dirname(__file__)
-    candidates = [
-        os.path.join(base, "fonts", "7x13.bdf"),
-        os.path.join(base, "fonts", "6x9.bdf"),
-        os.path.join(base, "fonts", "5x8.bdf"),
-    ]
-    # Add some common system locations (may not be BDFs, but harmless to try)
-    candidates.append("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
-    # Return candidates without checking filesystem existence so the loader
-    # can attempt to load them directly.
-    return candidates
 
 
 def init_matrix() -> Optional[Tuple[RGBMatrix, object, object, object, object]]:
@@ -173,24 +173,25 @@ def cal(timestr: str,
             # fall back to SetPixel loops if DrawLine isn't available on this
             # graphics binding. Determine width/height from canvas or matrix if
             # possible, otherwise fall back to common defaults.
+            # Use opacity-adjusted white
+            border_color = GRAPHICS_COLORS['WHITE']
             # sensible defaults matching the init options
             w, h = 64, 64
-            
-            # Draw the four edge lines
-            graphics.DrawLine(canvas, 0, 0, w - 1, 0, GRAPHICS_COLORS.get('WHITE'))
-            graphics.DrawLine(canvas, 0, h - 1, w - 1, h - 1, GRAPHICS_COLORS.get('WHITE'))
-            graphics.DrawLine(canvas, 0, 0, 0, h - 1, GRAPHICS_COLORS.get('WHITE'))
-            graphics.DrawLine(canvas, w - 1, 0, w - 1, h - 1, GRAPHICS_COLORS.get('WHITE'))
-            
 
-            color = graphics.Color(255, 255, 0)
+            # Draw the four edge lines (use DrawLine if available)
+            graphics.DrawLine(canvas, 0, 0, w - 1, 0, border_color)
+            graphics.DrawLine(canvas, 0, h - 1, w - 1, h - 1, border_color)
+            graphics.DrawLine(canvas, 0, 0, 0, h - 1, border_color)
+            graphics.DrawLine(canvas, w - 1, 0, w - 1, h - 1, border_color)
+
+            color = GRAPHICS_COLORS['BLUE']
 
             # Draw using large/medium/small fonts with graceful fallbacks
-            # Line positions chosen to avoid the 1px border
+            # Line positions chosen to avoid the 1px border:
             graphics.DrawText(canvas, f_large, 4, 12, color, line1)
             graphics.DrawText(canvas, f_med, 4, 24, color, line2)
-            graphics.DrawText(canvas, f_small, 4, 36, color, line3)
-
+            graphics.DrawText(canvas, f_small or graphics.Font(), 4, 36, color, line3)
+            
             # Swap to show the frame
             _state["canvas"] = _state["matrix"].SwapOnVSync(canvas)
         except Exception as e:
