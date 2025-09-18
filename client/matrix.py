@@ -13,7 +13,7 @@ def _available_font_paths() -> list:
     base = os.path.dirname(__file__)
     candidates = [
         os.path.join(base, "fonts", "7x13.bdf"),
-        os.path.join(base, "fonts", "6x13.bdf"),
+        os.path.join(base, "fonts", "6x9.bdf"),
         os.path.join(base, "fonts", "5x8.bdf"),
     ]
     # Add some common system locations (may not be BDFs, but harmless to try)
@@ -40,14 +40,7 @@ def init_matrix() -> Optional[Tuple[RGBMatrix, object, object]]:
         matrix = RGBMatrix(options=options)
         canvas = matrix.CreateFrameCanvas()
         font = graphics.Font()
-
-        for path in _available_font_paths():
-            try:
-                font.LoadFont(path)
-                break
-            except Exception:
-                # try next candidate
-                continue
+        font.LoadFont("fonts/6x9.bdf")
 
         # If font.LoadFont never succeeded, keep font as None to trigger fallback
         if not hasattr(font, 'LoadFont'):
@@ -76,16 +69,15 @@ def cal(timestr: str,
     """
     line1 = f"{timestr}"
     line2 = f"{arrival} {departure}".strip() or "-"
-    if isinstance(distance_mi, (int, float)):
-        line3 = f"{icao} {distance_mi:.2f}mi"
-    else:
-        line3 = f"{icao} {distance_mi}"
+    line3 = f"{icao}"
+    line4 = f"{distance_mi}mi"
 
     if not _HAVE_RGB:
         # No hardware — fallback to console output
         print(line1)
         print(line2)
         print(line3)
+        print(line4)
         return
 
     # Use a lock for init/draw so concurrent scheduler threads don't race
@@ -97,6 +89,7 @@ def cal(timestr: str,
                 print(line1)
                 print(line2)
                 print(line3)
+                print(line4)
                 return
             m, c, f = init_res
             _state["matrix"] = m
@@ -107,12 +100,59 @@ def cal(timestr: str,
             canvas = _state["canvas"]
             font = _state["font"]
             canvas.Clear()
+
+            # Draw a white border around the frame. Prefer DrawLine (fast) and
+            # fall back to SetPixel loops if DrawLine isn't available on this
+            # graphics binding. Determine width/height from canvas or matrix if
+            # possible, otherwise fall back to common defaults.
+            border_color = graphics.Color(255, 255, 255)
+            # sensible defaults matching the init options
+            w, h = 64, 32
+            try:
+                w = int(getattr(canvas, 'width', None) or getattr(_state['matrix'], 'width', None) or w)
+                h = int(getattr(canvas, 'height', None) or getattr(_state['matrix'], 'height', None) or h)
+            except Exception:
+                # keep defaults
+                pass
+
+            try:
+                # Draw the four edge lines
+                graphics.DrawLine(canvas, 0, 0, w - 1, 0, border_color)
+                graphics.DrawLine(canvas, 0, h - 1, w - 1, h - 1, border_color)
+                graphics.DrawLine(canvas, 0, 0, 0, h - 1, border_color)
+                graphics.DrawLine(canvas, w - 1, 0, w - 1, h - 1, border_color)
+            except Exception:
+                # Fallback: set individual edge pixels
+                try:
+                    for x in range(w):
+                        try:
+                            canvas.SetPixel(x, 0, 255, 255, 255)
+                        except Exception:
+                            pass
+                        try:
+                            canvas.SetPixel(x, h - 1, 255, 255, 255)
+                        except Exception:
+                            pass
+                    for y in range(h):
+                        try:
+                            canvas.SetPixel(0, y, 255, 255, 255)
+                        except Exception:
+                            pass
+                        try:
+                            canvas.SetPixel(w - 1, y, 255, 255, 255)
+                        except Exception:
+                            pass
+                except Exception:
+                    # If all drawing fails, ignore and continue; text fallback will print to console
+                    pass
+
             color = graphics.Color(255, 255, 0)
 
             if font is not None:
-                graphics.DrawText(canvas, font, 1, 10, color, line1)
-                graphics.DrawText(canvas, font, 1, 20, color, line2)
-                graphics.DrawText(canvas, font, 1, 30, color, line3)
+                graphics.DrawText(canvas, font, 4, 10, color, line1)
+                graphics.DrawText(canvas, font, 4, 20, color, line2)
+                graphics.DrawText(canvas, font, 4, 30, color, line3)
+                graphics.DrawText(canvas, font, 4, 40, color, line4)
             else:
                 fallback_font = graphics.Font()
                 try:

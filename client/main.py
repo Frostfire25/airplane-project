@@ -155,7 +155,6 @@ def _closest_flight_run():
 		print(f"Exception in _perform_run: {exc}")
 
 def _matrix_clock_run():
-    global matrix, canvas, font
     nearest_plane = get_nearestplane_by_id(ID)
 
     # Use Python conditional expression and guard for None
@@ -166,10 +165,8 @@ def _matrix_clock_run():
 
     now_local = datetime.datetime.now(MATRIX_ZONE)
     ts = now_local.strftime("%H:%M:%S")
-    # Delegate display to matrix helper which will fallback to console if no hardware
-    result = cal(ts, arrivalAirport, departureAirport, icao, distance_mi, matrix, canvas, font)
-    if result:
-        matrix, canvas, font = result
+    # Delegate display to matrix helper which manages its own canvas/matrix state
+    cal(ts, arrivalAirport, departureAirport, icao, distance_mi)
 
 def shutdown_scheduler(signum=None, frame=None):
 	# Idempotent shutdown handler invoked by signals or manually.
