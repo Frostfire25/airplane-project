@@ -1,18 +1,13 @@
 [Unit]
-Description=Airplane OpenSky poller + Matrix display
-After=network-online.target
+Description=Airplane Project
 Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
-User=pi
-Group=pi
-WorkingDirectory=/home/pi/airplane-project/client
-# Ensure unbuffered output so logs appear promptly
-Environment=PYTHONUNBUFFERED=1
-# Ensure venv bin is first on PATH so python tools resolve
-Environment=PATH=/home/pi/airplane-project/client/.venv/bin:/usr/bin:/bin
-ExecStart=/home/pi/airplane-project/client/.venv/bin/python /home/pi/airplane-project/client/main.py
+WorkingDirectory=/home/pi/code/airplane-project/client
+# Use the venv interpreter if you run inside the project's virtualenv; adjust as needed.
+ExecStart=/home/pi/code/airplane-project/client/.venv/bin/python /home/pi/code/airplane-project/client/main.py
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
