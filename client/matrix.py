@@ -5,8 +5,9 @@ import threading
 try:
     from rgbmatrix import RGBMatrix, RGBMatrixOptions, graphics
     _HAVE_RGB = True
-except Exception:
+except Exception as e:
     _HAVE_RGB = False
+    print(e)
 
 # --- Common static colors (20) ---
 # Define as RGB tuples so they are safe even if rgbmatrix/graphics isn't available.
@@ -50,7 +51,7 @@ COLORS = {
     'TEAL': TEAL,
     'NAVY': NAVY,
     'ORANGE': ORANGE,
-    'PINK': PINK,
+    'PINK': PINK, 
     'BROWN': BROWN,
     'GOLD': GOLD,
 }
