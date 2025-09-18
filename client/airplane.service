@@ -1,0 +1,17 @@
+[Unit]
+Description=Airplane matrix demo
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/code/airplane-project/client
+# Use the venv interpreter if you run inside the project's virtualenv; adjust as needed.
+ExecStart=/home/pi/code/airplane-project/client/.venv/bin/python /home/pi/code/airplane-project/client/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
