@@ -107,44 +107,14 @@ def cal(timestr: str,
             # possible, otherwise fall back to common defaults.
             border_color = graphics.Color(255, 255, 255)
             # sensible defaults matching the init options
-            w, h = 64, 32
-            try:
-                w = int(getattr(canvas, 'width', None) or getattr(_state['matrix'], 'width', None) or w)
-                h = int(getattr(canvas, 'height', None) or getattr(_state['matrix'], 'height', None) or h)
-            except Exception:
-                # keep defaults
-                pass
-
-            try:
-                # Draw the four edge lines
-                graphics.DrawLine(canvas, 0, 0, w - 1, 0, border_color)
-                graphics.DrawLine(canvas, 0, h - 1, w - 1, h - 1, border_color)
-                graphics.DrawLine(canvas, 0, 0, 0, h - 1, border_color)
-                graphics.DrawLine(canvas, w - 1, 0, w - 1, h - 1, border_color)
-            except Exception:
-                # Fallback: set individual edge pixels
-                try:
-                    for x in range(w):
-                        try:
-                            canvas.SetPixel(x, 0, 255, 255, 255)
-                        except Exception:
-                            pass
-                        try:
-                            canvas.SetPixel(x, h - 1, 255, 255, 255)
-                        except Exception:
-                            pass
-                    for y in range(h):
-                        try:
-                            canvas.SetPixel(0, y, 255, 255, 255)
-                        except Exception:
-                            pass
-                        try:
-                            canvas.SetPixel(w - 1, y, 255, 255, 255)
-                        except Exception:
-                            pass
-                except Exception:
-                    # If all drawing fails, ignore and continue; text fallback will print to console
-                    pass
+            w, h = 64, 64
+            
+            # Draw the four edge lines
+            graphics.DrawLine(canvas, 0, 0, w - 1, 0, border_color)
+            graphics.DrawLine(canvas, 0, h - 1, w - 1, h - 1, border_color)
+            graphics.DrawLine(canvas, 0, 0, 0, h - 1, border_color)
+            graphics.DrawLine(canvas, w - 1, 0, w - 1, h - 1, border_color)
+            
 
             color = graphics.Color(255, 255, 0)
 
