@@ -28,7 +28,7 @@ def init_matrix() -> Optional[Tuple[RGBMatrix, object, object]]:
     try:
         options = RGBMatrixOptions()
         # Adjust these to match your panel/HAT
-        options.rows = 32
+        options.rows = 64
         options.cols = 64
         options.chain_length = 1
         options.parallel = 1
