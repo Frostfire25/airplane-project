@@ -1,0 +1,37 @@
+pi@raspberrypi:~/code/airplane-project $ cd /etc/systemd/system/
+pi@raspberrypi:/etc/systemd/system $ sudo nano airplane.service 
+pi@raspberrypi:/etc/systemd/system $ sudo nano airplane.service 
+pi@raspberrypi:/etc/systemd/system $ sudo systemctl daemon-reload
+pi@raspberrypi:/etc/systemd/system $ sudo systemctl enable --now airplane.service
+pi@raspberrypi:/etc/systemd/system $ ls
+airplane.service                    dbus-org.bluez.service                      dbus-org.freedesktop.nm-dispatcher.service  dev-serial1.device.wants  getty@tty1.service.d    multi-user.target.wants      printer.target.wants    sockets.target.wants  timers.target.wants
+bluetooth.target.wants              dbus-org.freedesktop.Avahi.service          dbus-org.freedesktop.timesync1.service      display-manager.service   graphical.target.wants  network-online.target.wants  reboot.target.wants     sshd.service          wayvnc.service.wants
+dbus-fi.w1.wpa_supplicant1.service  dbus-org.freedesktop.ModemManager1.service  default.target                              getty.target.wants        halt.target.wants       poweroff.target.wants        remote-fs.target.wants  sysinit.target.wants
+pi@raspberrypi:/etc/systemd/system $ sudo systemctl status airplane.service --no-pager 1
+* init.scope - System and Service Manager
+     Loaded: loaded
+  Transient: yes
+     Active: active (running) since Thu 2025-03-06 06:56:14 PST; 6 months 13 days ago
+       Docs: man:systemd(1)
+      Tasks: 1 (limit: 3908)
+        CPU: 3.964s
+     CGroup: /init.scope
+             `-1 /sbin/init splash
+
+Sep 18 12:06:00 raspberrypi systemd[1]: airplane.service: Scheduled restart job, restart counter is at 95.
+Sep 18 12:06:00 raspberrypi systemd[1]: Stopped airplane.service - Airplane Project.
+Sep 18 12:06:00 raspberrypi systemd[1]: Started airplane.service - Airplane Project.
+Sep 18 12:06:02 raspberrypi systemd[1]: airplane.service: Main process exited, code=killed, status=11/SEGV
+Sep 18 12:06:02 raspberrypi systemd[1]: airplane.service: Failed with result 'signal'.
+Sep 18 12:06:07 raspberrypi systemd[1]: airplane.service: Scheduled restart job, restart counter is at 96.
+Sep 18 12:06:07 raspberrypi systemd[1]: Stopped airplane.service - Airplane Project.
+Sep 18 12:06:07 raspberrypi systemd[1]: Started airplane.service - Airplane Project.
+Sep 18 12:06:09 raspberrypi systemd[1]: airplane.service: Main process exited, code=killed, status=11/SEGV
+Sep 18 12:06:09 raspberrypi systemd[1]: airplane.service: Failed with result 'signal'.
+
+* airplane.service - Airplane Project
+     Loaded: loaded (/etc/systemd/system/airplane.service; enabled; preset: enabled)
+     Active: activating (auto-restart) (Result: signal) since Thu 2025-09-18 12:06:09 PDT; 3s ago
+    Process: 2962 ExecStart=/home/pi/code/airplane-project/client/.venv/bin/python /home/pi/code/airplane-project/client/main.py (code=killed, signal=SEGV)
+   Main PID: 2962 (code=killed, signal=SEGV)
+        CPU: 886ms
