@@ -235,7 +235,7 @@ def cal(timestr: str,
     line1 = f"{timestr}"
     line2 = f"{arrival} {departure}".strip() or "-"
     line3 = f"{callsign or '-'}"
-    line4 = f"{icao} {distance_mi:0.2f} mi"
+    line4 = f"{distance_mi:0.2f} mi"
     line5 = f"{airline}"
 
     if not _HAVE_RGB:
