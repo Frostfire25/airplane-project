@@ -128,7 +128,7 @@ def init_matrix() -> Optional[Tuple[RGBMatrix, object, object, object, object]]:
         # Some Pi HATs and panels need tuning; these are safe defaults
         options.pwm_lsb_nanoseconds = 130
         options.disable_hardware_pulsing = True
-        options.gpio_slowdown=2
+        options.gpio_slowdown=3
 
         matrix = RGBMatrix(options=options)
         canvas = matrix.CreateFrameCanvas()
