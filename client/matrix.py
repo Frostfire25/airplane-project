@@ -187,7 +187,7 @@ def init_matrix() -> Optional[Tuple[RGBMatrix, object, object, object, object]]:
         options.parallel = 1
         options.hardware_mapping = 'regular'
         # Some Pi HATs and panels need tuning; these are safe defaults
-        options.pwm_lsb_nanoseconds = 130
+        options.pwm_lsb_nanoseconds = 150
         options.disable_hardware_pulsing = True
         options.gpio_slowdown=3
 
