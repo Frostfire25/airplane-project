@@ -1,13 +1,20 @@
+from __future__ import annotations
+
 from typing import Optional, Tuple
 import os
 import threading
+import datetime
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
 
 try:
     from rgbmatrix import RGBMatrix, RGBMatrixOptions, graphics
     _HAVE_RGB = True
 except Exception as e:
     _HAVE_RGB = False
-    print(e)
 
 # --- Common static colors (20) ---
 # Define as RGB tuples so they are safe even if rgbmatrix/graphics isn't available.
@@ -79,6 +86,31 @@ if _HAVE_RGB:
         # Ignore if graphics.Color isn't behaving as expected; callers can fall back
         GRAPHICS_COLORS = {}
 
+def _get_local_now():
+    """Return timezone-aware local datetime using TIMEZONE env or UTC as fallback."""
+    tz_name = os.getenv('TIMEZONE') or os.getenv('TZ') or 'UTC'
+    try:
+        if ZoneInfo:
+            return datetime.datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        pass
+    return datetime.datetime.now(datetime.timezone.utc)
+
+# Map local time to opacity percent (1..100)
+# - midnight (00:00) -> 1
+# - noon (12:00) -> 100
+# linear ramp from 00:00->12:00 up, 12:00->24:00 down
+def current_opacity_percent() -> float:
+    now = _get_local_now()
+    hour = now.hour + now.minute / 60.0 + now.second / 3600.0  # 0..24
+    if hour <= 12.0:
+        percent = 1.0 + (100.0 - 1.0) * (hour / 12.0)
+    else:
+        percent = 100.0 - (100.0 - 1.0) * ((hour - 12.0) / 12.0)
+    return max(1.0, min(100.0, percent))
+
+def current_opacity_multiplier() -> float:
+    return current_opacity_percent() / 100.0
 
 def init_matrix() -> Optional[Tuple[RGBMatrix, object, object, object, object]]:
     """Initialize and return (matrix, canvas, font_large, font_medium, font_small) or None on failure."""
@@ -172,12 +204,22 @@ def cal(timestr: str,
             f_small = _state.get("font_small")
             canvas.Clear()
 
-            # Draw a white border around the frame. Prefer DrawLine (fast) and
-            # fall back to SetPixel loops if DrawLine isn't available on this
-            # graphics binding. Determine width/height from canvas or matrix if
-            # possible, otherwise fall back to common defaults.
-            # Use opacity-adjusted white
-            border_color = GRAPHICS_COLORS['WHITE']
+            # Compute opacity for this draw and build graphics.Color instances on-the-fly
+            mult = current_opacity_multiplier()
+            border_rgb = _apply_opacity(COLORS['WHITE'], mult)
+            text_rgb = _apply_opacity(COLORS['BLUE'], mult)
+            try:
+                border_color = graphics.Color(*border_rgb)
+                text_color = graphics.Color(*text_rgb)
+            except Exception:
+                # fall back to any precomputed graphics colors if available
+                border_color = GRAPHICS_COLORS.get('WHITE') if GRAPHICS_COLORS else None
+                text_color = GRAPHICS_COLORS.get('BLUE') if GRAPHICS_COLORS else None
+                if border_color is None:
+                    border_color = graphics.Color(*_apply_opacity(COLORS['WHITE'], 1.0))
+                if text_color is None:
+                    text_color = graphics.Color(*_apply_opacity(COLORS['BLUE'], 1.0))
+
             # sensible defaults matching the init options
             w, h = 64, 64
 
@@ -187,13 +229,10 @@ def cal(timestr: str,
             graphics.DrawLine(canvas, 0, 0, 0, h - 1, border_color)
             graphics.DrawLine(canvas, w - 1, 0, w - 1, h - 1, border_color)
 
-            color = GRAPHICS_COLORS['BLUE']
-
             # Draw using large/medium/small fonts with graceful fallbacks
-            # Line positions chosen to avoid the 1px border:
-            graphics.DrawText(canvas, f_large, 4, 12, color, line1)
-            graphics.DrawText(canvas, f_med, 4, 24, color, line2)
-            graphics.DrawText(canvas, f_small or graphics.Font(), 4, 36, color, line3)
+            graphics.DrawText(canvas, f_large, 4, 12, text_color, line1)
+            graphics.DrawText(canvas, f_med, 4, 24, text_color, line2)
+            graphics.DrawText(canvas, f_small, 4, 36, text_color, line3)
             
             # Swap to show the frame
             _state["canvas"] = _state["matrix"].SwapOnVSync(canvas)
