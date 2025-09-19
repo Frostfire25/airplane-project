@@ -68,6 +68,54 @@ GRAPHICS_COLORS = {}
 # Opacity multiplier (0.0 - 1.0) to darken colors; 1.0 = full brightness.
 OPACITY = 1.0
 
+# --- New: environment-configurable values ---
+# MATRIX_BORDER_COLOR and MATRIX_TEXT_COLOR may be a named color (from COLORS),
+# a hex string like #RRGGBB, or a CSV 'r,g,b'. Default to WHITE and BLUE.
+ENV_BORDER_COLOR = os.getenv('MATRIX_BORDER_COLOR', 'WHITE')
+ENV_TEXT_COLOR = os.getenv('MATRIX_TEXT_COLOR', 'BLUE')
+# Optional override to the time-based opacity (percent 1-100). If not set, opacity
+# is computed from local time (midnight->1, noon->100).
+ENV_OPACITY_PERCENT = os.getenv('MATRIX_OPACITY_PERCENT')
+# Optional matrix brightness (0-100) applied to RGBMatrixOptions.brightness
+ENV_MATRIX_BRIGHTNESS = os.getenv('MATRIX_BRIGHTNESS')
+
+
+def _parse_color(value: str) -> tuple:
+    """Return an (r,g,b) tuple for a named color, hex (#RRGGBB), or CSV 'r,g,b'."""
+    if not value:
+        return WHITE
+    v = value.strip()
+    # Named color (case-insensitive)
+    name = v.upper()
+    if name in COLORS:
+        return COLORS[name]
+    # Hex #RRGGBB
+    if v.startswith('#') and len(v) == 7:
+        try:
+            r = int(v[1:3], 16)
+            g = int(v[3:5], 16)
+            b = int(v[5:7], 16)
+            return (r, g, b)
+        except Exception:
+            pass
+    # CSV r,g,b
+    parts = v.split(',')
+    if len(parts) == 3:
+        try:
+            r = int(parts[0])
+            g = int(parts[1])
+            b = int(parts[2])
+            return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
+        except Exception:
+            pass
+    # Fallback
+    return WHITE
+
+# Pre-parse env colors for speed
+PARSED_BORDER_RGB = _parse_color(ENV_BORDER_COLOR)
+PARSED_TEXT_RGB = _parse_color(ENV_TEXT_COLOR)
+
+
 def _apply_opacity(rgb: tuple, opacity: float) -> tuple:
     """Return an (r,g,b) tuple scaled by opacity and clamped to 0-255."""
     try:
@@ -110,6 +158,13 @@ def current_opacity_percent() -> float:
     return max(1.0, min(100.0, percent))
 
 def current_opacity_multiplier() -> float:
+    # If ENV_OPACITY_PERCENT is set and valid, use it as override
+    try:
+        if ENV_OPACITY_PERCENT is not None:
+            p = float(ENV_OPACITY_PERCENT)
+            return max(1.0, min(100.0, p)) / 100.0
+    except Exception:
+        pass
     return current_opacity_percent() / 100.0
 
 def init_matrix() -> Optional[Tuple[RGBMatrix, object, object, object, object]]:
@@ -123,6 +178,12 @@ def init_matrix() -> Optional[Tuple[RGBMatrix, object, object, object, object]]:
         options.cols = 64
         options.chain_length = 1
         options.brightness = 50  # 0-100
+        # allow env override of brightness
+        try:
+            if ENV_MATRIX_BRIGHTNESS is not None:
+                options.brightness = int(max(0, min(100, int(ENV_MATRIX_BRIGHTNESS))))
+        except Exception:
+            pass
         options.parallel = 1
         options.hardware_mapping = 'regular'
         # Some Pi HATs and panels need tuning; these are safe defaults
@@ -146,7 +207,7 @@ def init_matrix() -> Optional[Tuple[RGBMatrix, object, object, object, object]]:
         # Medium is required per request: fonts/6x9.bdf
         font_large = _try_load('7x13.bdf')    # large (best-effort)
         font_medium = _try_load('6x9.bdf')    # medium (requested)
-        font_small = _try_load('4x6.bdf')     # small
+        font_small = _try_load('5x7.bdf')     # small
 
         return (matrix, canvas, font_large, font_medium, font_small)
     except Exception:
@@ -163,7 +224,8 @@ def cal(timestr: str,
     departure: str,
     icao: str,
     distance_mi: float,
-    callsign) -> None:
+    callsign: str,
+    airline: str) -> None:
     """Draw the supplied information to the RGB matrix (if available) and return
     the (matrix, canvas, font) triple to reuse on subsequent calls.
 
@@ -174,6 +236,7 @@ def cal(timestr: str,
     line2 = f"{arrival} {departure}".strip() or "-"
     line3 = f"{callsign or '-'}"
     line4 = f"{icao} {distance_mi:0.2f} mi"
+    line5 = f"{airline}"
 
     if not _HAVE_RGB:
         # No hardware — fallback to console output
@@ -181,6 +244,7 @@ def cal(timestr: str,
         print(line2)
         print(line3)
         print(line4)
+        print(line5)
         return
 
     # Use a lock for init/draw so concurrent scheduler threads don't race
@@ -193,6 +257,7 @@ def cal(timestr: str,
                 print(line2)
                 print(line3)
                 print(line4)
+                print(line5)
                 return
             m, c, fl, fm, fs = init_res
             _state["matrix"] = m
@@ -210,8 +275,8 @@ def cal(timestr: str,
 
             # Compute opacity for this draw and build graphics.Color instances on-the-fly
             mult = current_opacity_multiplier()
-            border_rgb = _apply_opacity(COLORS['WHITE'], mult)
-            text_rgb = _apply_opacity(COLORS['BLUE'], mult)
+            border_rgb = _apply_opacity(PARSED_BORDER_RGB, mult)
+            text_rgb = _apply_opacity(PARSED_TEXT_RGB, mult)
             try:
                 border_color = graphics.Color(*border_rgb)
                 text_color = graphics.Color(*text_rgb)
@@ -238,7 +303,8 @@ def cal(timestr: str,
             graphics.DrawText(canvas, f_med, 4, 24, text_color, line2)
             graphics.DrawText(canvas, f_med, 4, 36, text_color, line3)
             graphics.DrawText(canvas, f_small, 4, 48, text_color, line4)
-            
+            graphics.DrawText(canvas, f_small, 4, 60, text_color, line5)
+
             # Swap to show the frame
             _state["canvas"] = _state["matrix"].SwapOnVSync(canvas)
         except Exception as e:
@@ -247,6 +313,7 @@ def cal(timestr: str,
             print(line2)
             print(line3)
             print(line4)
+            print(line5)
             return
 
 

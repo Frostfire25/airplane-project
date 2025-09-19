@@ -59,7 +59,7 @@ def get_closest_flight_to_position(
     if not token:
         return ErrorResponse(message="failed to obtain token", code=None)
     
-    print(token)
+    # print(token)
 
     states_resp = get_opensky_states(token, lat_min, lat_max, lon_min, lon_max)
     if isinstance(states_resp, ErrorResponse):
@@ -97,7 +97,7 @@ def get_closest_flight_to_position(
 
         flights_or_error = get_aircraft_flights(token, s.icao24, begin, end)
 
-        print(flights_or_error)
+        # print(flights_or_error)
 
         # If API returned an error, cache the failure and try next state
         if isinstance(flights_or_error, ErrorResponse):

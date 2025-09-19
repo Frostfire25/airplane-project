@@ -124,4 +124,115 @@ def distance_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 	earth_miles = 3956.0
 	return earth_miles * c
 
-__all__ = ["find_closest_state", "create_position_identifier", "hsv_to_rgb", "clear", "swap", "set_pixel", "get_canvas", "distance_miles"]
+# Simple lookup table mapping common ICAO airline prefixes to display names.
+# This is not exhaustive; expand if you need more carriers.
+_AIRLINE_BY_ICAO = {
+    'DAL': 'Delta Air Lines',
+    'AAL': 'American Airlines',
+    'UAL': 'United Airlines',
+    'SWA': 'Southwest Airlines',
+    'ASA': 'Alaska Airlines',
+    'JBU': 'JetBlue Airways',
+    'NKS': 'Spirit Airlines',
+    'FFT': 'Frontier Airlines',
+    'HAL': 'Hawaiian Airlines',
+    'ACA': 'Air Canada',
+    'WJA': 'WestJet',
+    'BAW': 'British Airways',
+    'DLH': 'Lufthansa',
+    'AFR': 'Air France',
+    'KLM': 'KLM Royal Dutch Airlines',
+    'IBE': 'Iberia',
+    'QFA': 'Qantas',
+    'VIR': 'Virgin Atlantic',
+    'UAE': 'Emirates',
+    'ETD': 'Etihad Airways',
+    'QTR': 'Qatar Airways',
+    'SIA': 'Singapore Airlines',
+    'CPA': 'Cathay Pacific',
+    'ANA': 'All Nippon Airways',
+    'JAL': 'Japan Airlines',
+    'RYR': 'Ryanair',
+    'EZY': 'easyJet',
+    'THY': 'Turkish Airlines',
+    'AFL': 'Aeroflot',
+    'SAS': 'Scandinavian Airlines',
+    'KAL': 'Korean Air',
+    'AIC': 'Air India',
+    'DLH': 'Lufthansa',
+    'DAL': 'Delta Air Lines',
+    'CPA': 'Cathay Pacific',
+    'TOM': 'TOM Aircraft',
+}
+
+# Some carriers are more commonly referred to by their telephony/callsign words;
+# map a few telephony names to airlines so the function can accept either form.
+_TELEPHONY_TO_AIRLINE = {
+    'DELTA': 'Delta Air Lines',
+    'AMERICAN': 'American Airlines',
+    'UNITED': 'United Airlines',
+    'SOUTHWEST': 'Southwest Airlines',
+    'JETBLUE': 'JetBlue Airways',
+    'RYANAIR': 'Ryanair',
+    'EASY': 'easyJet',
+}
+
+import re
+
+
+def get_airline_by_callsign(callsign: str) -> Optional[str]:
+    """Return the airline name for a given callsign string.
+
+    The function accepts either:
+    - an ICAO prefix (e.g. 'DAL', 'AAL'),
+    - a flight callsign that begins with the ICAO prefix followed by digits (e.g. 'DAL123'),
+    - or a telephony-style name (e.g. 'Delta', 'American').
+
+    Returns the airline name string if known, otherwise None.
+    """
+    if not callsign:
+        return ""
+    s = str(callsign).strip()
+    if not s:
+        return ""
+
+    # Normalize to uppercase for matching
+    up = s.upper()
+
+    # Direct ICAO exact match
+    if up in _AIRLINE_BY_ICAO:
+        return _AIRLINE_BY_ICAO[up]
+
+    # Telephony exact match (e.g. 'DELTA')
+    if up in _TELEPHONY_TO_AIRLINE:
+        return _TELEPHONY_TO_AIRLINE[up]
+
+    # If the callsign starts with letters then numbers (common), extract the alpha prefix
+    m = re.match(r'^([A-Z]{2,3})\d', up)
+    if m:
+        prefix = m.group(1)
+        if prefix in _AIRLINE_BY_ICAO:
+            return _AIRLINE_BY_ICAO[prefix]
+
+    # If the callsign is letters-only up to 3 chars (e.g. 'DAL') we already tried it.
+    # Try extracting leading 3 or 2 letters if present (some services use 2-letter IATA but
+    # our table is ICAO-based). Try both lengths.
+    m2 = re.match(r'^([A-Z]{3})', up)
+    if m2:
+        p3 = m2.group(1)
+        if p3 in _AIRLINE_BY_ICAO:
+            return _AIRLINE_BY_ICAO[p3]
+    m3 = re.match(r'^([A-Z]{2})', up)
+    if m3:
+        p2 = m3.group(1)
+        if p2 in _AIRLINE_BY_ICAO:
+            return _AIRLINE_BY_ICAO[p2]
+
+    # Finally, try matching telephony substrings (e.g. 'DELTA123' contains 'DELTA')
+    for tel, name in _TELEPHONY_TO_AIRLINE.items():
+        if tel in up:
+            return name
+
+    return ""
+
+__all__ = ["find_closest_state", "create_position_identifier", "hsv_to_rgb", "clear", "swap", "set_pixel", "get_canvas", "distance_miles", "get_airline_by_callsign"]
