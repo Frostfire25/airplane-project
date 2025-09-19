@@ -162,12 +162,13 @@ def _matrix_clock_run():
 	distance_mi = distance_miles(nearest_plane.latitude, nearest_plane.longitude, LATITUDE, LONGITUDE) if nearest_plane and nearest_plane.latitude and nearest_plane.longitude else 0.0
 	arrivalAirport = nearest_plane.arrivalAirport if nearest_plane and nearest_plane.arrivalAirport else ""
 	departureAirport = nearest_plane.departureAirport if nearest_plane and nearest_plane.departureAirport else ""
+	callsign = nearest_plane.callsign if nearest_plane and nearest_plane.callsign else ""
 
 	now_local = datetime.datetime.now(MATRIX_ZONE)
 	ts = now_local.strftime("%I:%M %p")  
 	# Format to 12-hour clock with AM/PM
     # Delegate display to matrix helper which manages its own canvas/matrix state
-	cal(ts, arrivalAirport, departureAirport, icao, distance_mi)
+	cal(ts, arrivalAirport, departureAirport, icao, distance_mi, callsign)
 
 def shutdown_scheduler(signum=None, frame=None):
 	# Idempotent shutdown handler invoked by signals or manually.
@@ -223,7 +224,7 @@ if __name__ == "__main__":
 		max_instances=1,
 		coalesce=True,
 		replace_existing=True,
-		#next_run_time=now,
+		next_run_time=now,
 	)
 	sched.add_job(_matrix_clock_run, "interval", seconds=MATRIX_SCHEDULE_SECONDS, id="matrix_time", max_instances=1, coalesce=True)
 	sched.start()	

@@ -215,6 +215,7 @@ def get_aircraft_flights(
 	except requests.RequestException as e:
 		code = None
 		try:
+			print(e)
 			code = e.response.status_code  # type: ignore[attr-defined]
 		except Exception:
 			code = None

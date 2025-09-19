@@ -162,7 +162,8 @@ def cal(timestr: str,
     arrival: str,
     departure: str,
     icao: str,
-    distance_mi: float) -> None:
+    distance_mi: float,
+    callsign) -> None:
     """Draw the supplied information to the RGB matrix (if available) and return
     the (matrix, canvas, font) triple to reuse on subsequent calls.
 
@@ -171,13 +172,15 @@ def cal(timestr: str,
     """
     line1 = f"{timestr}"
     line2 = f"{arrival} {departure}".strip() or "-"
-    line3 = f"{icao} {distance_mi:0.2f} mi"
+    line3 = f"{callsign or '-'}"
+    line4 = f"{icao} {distance_mi:0.2f} mi"
 
     if not _HAVE_RGB:
         # No hardware — fallback to console output
         print(line1)
         print(line2)
         print(line3)
+        print(line4)
         return
 
     # Use a lock for init/draw so concurrent scheduler threads don't race
@@ -189,6 +192,7 @@ def cal(timestr: str,
                 print(line1)
                 print(line2)
                 print(line3)
+                print(line4)
                 return
             m, c, fl, fm, fs = init_res
             _state["matrix"] = m
@@ -232,7 +236,8 @@ def cal(timestr: str,
             # Draw using large/medium/small fonts with graceful fallbacks
             graphics.DrawText(canvas, f_large, 4, 12, text_color, line1)
             graphics.DrawText(canvas, f_med, 4, 24, text_color, line2)
-            graphics.DrawText(canvas, f_small, 4, 36, text_color, line3)
+            graphics.DrawText(canvas, f_med, 4, 36, text_color, line3)
+            graphics.DrawText(canvas, f_small, 4, 48, text_color, line4)
             
             # Swap to show the frame
             _state["canvas"] = _state["matrix"].SwapOnVSync(canvas)
@@ -241,6 +246,7 @@ def cal(timestr: str,
             print(line1)
             print(line2)
             print(line3)
+            print(line4)
             return
 
 
