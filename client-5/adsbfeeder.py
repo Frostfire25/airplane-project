@@ -15,10 +15,17 @@ logger = logging.getLogger(__name__)
 class ADSBDecoder:
     """Decoder for ADS-B messages with caching and position tracking."""
     
-    def __init__(self):
-        """Initialize the ADS-B decoder with position tracking."""
+    def __init__(self, reference_lat: Optional[float] = None, reference_lon: Optional[float] = None):
+        """Initialize the ADS-B decoder with position tracking.
+        
+        Args:
+            reference_lat: Reference latitude for single-message position decoding
+            reference_lon: Reference longitude for single-message position decoding
+        """
         self.position_cache = {}  # Store odd/even messages for position decoding
         self.aircraft_data = {}   # Store decoded aircraft information
+        self.reference_lat = reference_lat
+        self.reference_lon = reference_lon
         
     def decode_message(self, msg: str, timestamp: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """
@@ -74,7 +81,9 @@ class ADSBDecoder:
         
         # Decode based on typecode
         if 1 <= tc <= 4:  # Aircraft identification
-            result['callsign'] = pms.adsb.callsign(msg)
+            callsign = pms.adsb.callsign(msg)
+            # Strip trailing underscores and spaces (ADS-B padding)
+            result['callsign'] = callsign.rstrip('_').strip() if callsign else None
             result['category'] = pms.adsb.category(msg)
             
         elif 5 <= tc <= 8:  # Surface position
@@ -105,8 +114,23 @@ class ADSBDecoder:
     def _decode_position(self, msg: str, icao: str, result: Dict[str, Any], is_surface: bool = False):
         """
         Decode position from ADS-B message.
-        Requires both odd and even messages for CPR decoding.
+        Tries single-message decoding with reference position first, then CPR with odd/even pair.
         """
+        # Try single-message decoding with reference position first
+        if self.reference_lat is not None and self.reference_lon is not None and not is_surface:
+            try:
+                position = pms.adsb.position_with_ref(msg, self.reference_lat, self.reference_lon)
+                if position:
+                    result['latitude'] = position[0]
+                    result['longitude'] = position[1]
+                    result['position_available'] = True
+                    result['decode_method'] = 'reference'
+                    logger.debug(f"Position decoded with reference for {icao}: {position[0]:.4f}, {position[1]:.4f}")
+                    return
+            except Exception as e:
+                logger.debug(f"Reference position decode failed for {icao}: {e}")
+        
+        # Fallback to CPR decoding with odd/even pair
         # Determine if this is odd or even frame
         oe_flag = pms.adsb.oe_flag(msg)
         
@@ -114,7 +138,7 @@ class ADSBDecoder:
         if icao not in self.position_cache:
             self.position_cache[icao] = {'even': None, 'odd': None, 'even_time': None, 'odd_time': None}
         
-        timestamp = result['timestamp']
+        timestamp = result.get('timestamp', datetime.utcnow().timestamp())
         if oe_flag == 0:  # Even
             self.position_cache[icao]['even'] = msg
             self.position_cache[icao]['even_time'] = timestamp
@@ -128,11 +152,20 @@ class ADSBDecoder:
             try:
                 if is_surface:
                     # Surface position requires reference position
-                    # Would need to be provided by caller
-                    result['position_available'] = False
-                    result['needs_reference'] = True
+                    if self.reference_lat is not None and self.reference_lon is not None:
+                        position = pms.adsb.surface_position_with_ref(
+                            msg, self.reference_lat, self.reference_lon
+                        )
+                        if position:
+                            result['latitude'] = position[0]
+                            result['longitude'] = position[1]
+                            result['position_available'] = True
+                            result['decode_method'] = 'surface_reference'
+                    else:
+                        result['position_available'] = False
+                        result['needs_reference'] = True
                 else:
-                    # Airborne position
+                    # Airborne position with CPR
                     position = pms.adsb.airborne_position(
                         cache['even'], 
                         cache['odd'],
@@ -143,8 +176,10 @@ class ADSBDecoder:
                         result['latitude'] = position[0]
                         result['longitude'] = position[1]
                         result['position_available'] = True
+                        result['decode_method'] = 'cpr'
+                        logger.debug(f"Position decoded with CPR for {icao}: {position[0]:.4f}, {position[1]:.4f}")
             except Exception as e:
-                logger.error(f"Position decode error for {icao}: {e}")
+                logger.debug(f"CPR position decode error for {icao}: {e}")
                 result['position_available'] = False
     
     def _decode_altitude(self, msg: str) -> Dict[str, Any]:

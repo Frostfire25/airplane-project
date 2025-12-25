@@ -60,9 +60,14 @@ ADSB_PORT = int(os.getenv('ADSB_PORT', '30005'))
 ADSB_DATA_TYPE = os.getenv('ADSB_DATA_TYPE', 'beast')  # 'raw', 'beast', or 'avr'
 MATRIX_SCHEDULE_SECONDS = int(os.getenv('MATRIX_SCHEDULE_SECONDS', '60'))
 ADSB_POLL_SCHEDULE_SECONDS = int(os.getenv('ADSB_POLL_SCHEDULE_SECONDS', '5'))
+AIRCRAFT_DISPLAY_DURATION = int(os.getenv('AIRCRAFT_DISPLAY_DURATION', '10'))
 
-# Initialize the ADS-B decoder
-adsb_decoder = ADSBDecoder()
+# Aircraft display rotation
+current_aircraft_index = 0
+last_rotation_time = datetime.datetime.now(datetime.timezone.utc)
+
+# Initialize the ADS-B decoder with reference position for single-message decoding
+adsb_decoder = ADSBDecoder(reference_lat=LATITUDE, reference_lon=LONGITUDE)
 
 # Initialize FlightAware scraper
 flightaware_scraper = FlightAwareScraper()
@@ -127,8 +132,6 @@ def update_aircraft_position(decoded_data: dict):
                 'latitude', 'longitude', 'typecode', 'category']:
         if key in decoded_data and decoded_data[key] is not None:
             aircraft[key] = decoded_data[key]
-            if key in ['latitude', 'longitude']:
-                print(f"  Position update: {key}={decoded_data[key]}")
     
     # Calculate distance if we have position
     if 'latitude' in aircraft and 'longitude' in aircraft:
@@ -149,23 +152,21 @@ def update_aircraft_position(decoded_data: dict):
                 # Check cache first
                 if callsign in route_cache:
                     nearest_aircraft['route_info'] = route_cache[callsign]
-                    print(f"Using cached route for {callsign}: {route_cache[callsign].get('origin', '?')} -> {route_cache[callsign].get('destination', '?')}")
                 else:
                     # Fetch from FlightAware
                     try:
-                        print(f"Looking up route for {callsign}...")
                         route_info = flightaware_scraper.get_flight_info(callsign)
                         if route_info:
                             route_cache[callsign] = route_info
                             nearest_aircraft['route_info'] = route_info
-                            print(f"  Route: {route_info.get('origin', '?')} -> {route_info.get('destination', '?')}")
-                        else:
-                            print(f"  No route information found for {callsign}")
+                            origin = route_info.get('origin', '?')[:3]
+                            dest = route_info.get('destination', '?')[:3]
+                            print(f"🛫 Route: {callsign} {origin}→{dest}")
                     except Exception as e:
-                        print(f"  Error looking up route for {callsign}: {e}")
+                        pass  # Silently fail route lookups
             
-            print(f"New nearest aircraft: {icao} - {aircraft.get('callsign', 'N/A')} - "
-                  f"{aircraft['distance']:.2f} mi - Alt: {aircraft.get('altitude', 'N/A')} ft")
+            callsign = aircraft.get('callsign', icao)
+            print(f"🎯 Nearest: {callsign} @ {aircraft['distance']:.1f}mi")
 
 
 def _adsb_poll_run():
@@ -173,68 +174,109 @@ def _adsb_poll_run():
     Poll for ADS-B messages and decode them.
     This is a simplified version - in production you'd want to connect to a TCP stream.
     """
-    print("ADS-B poll run - checking for messages...")
-    
-    # For demonstration, we'll simulate message reception
-    # In production, replace this with actual TCP connection to dump1090/readsb
-    # Example: connect to localhost:30005 for Beast format data
-    
     # Clean up old aircraft (not seen in last 60 seconds)
     cutoff_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=60)
     stale_aircraft = [icao for icao, data in aircraft_tracking.items() 
                       if data['last_seen'] < cutoff_time]
     for icao in stale_aircraft:
-        print(f"Removing stale aircraft: {icao}")
+        callsign = aircraft_tracking[icao].get('callsign', icao)
+        print(f"✈️  Lost: {callsign} ({icao})")
         del aircraft_tracking[icao]
     
     # Count aircraft with position data
     aircraft_with_position = [a for a in aircraft_tracking.values() 
                              if 'latitude' in a and 'longitude' in a]
     
-    print(f"Currently tracking {len(aircraft_tracking)} aircraft ({len(aircraft_with_position)} with position)")
-    
-    # Debug: show what we have
-    for icao, data in aircraft_tracking.items():
-        has_pos = 'latitude' in data and 'longitude' in data
-        callsign = data.get('callsign', 'N/A')
-        print(f"  {icao} ({callsign}): position={has_pos}, keys={list(data.keys())}")
-    
-    if nearest_aircraft:
-        print(f"Nearest: {nearest_aircraft.get('callsign', nearest_aircraft['icao'])} - "
-              f"{nearest_aircraft.get('distance', 0):.2f} mi")
+    # Summary output
+    if len(aircraft_tracking) > 0:
+        status_parts = []
+        status_parts.append(f"Tracking: {len(aircraft_tracking)} aircraft")
+        
+        if len(aircraft_with_position) > 0:
+            status_parts.append(f"{len(aircraft_with_position)} with position")
+        
+        # List aircraft with callsigns
+        aircraft_list = []
+        for data in aircraft_tracking.values():
+            callsign = data.get('callsign', data['icao'])
+            if 'distance' in data:
+                aircraft_list.append(f"{callsign} ({data['distance']:.1f}mi)")
+            else:
+                aircraft_list.append(f"{callsign}")
+        
+        if aircraft_list:
+            status_parts.append("| " + ", ".join(aircraft_list))
+        
+        print(f"✈️  {' '.join(status_parts)}")
+        
+        if nearest_aircraft:
+            callsign = nearest_aircraft.get('callsign', nearest_aircraft['icao'])
+            dist = nearest_aircraft.get('distance', 0)
+            alt = nearest_aircraft.get('altitude', 'N/A')
+            print(f"   Nearest: {callsign} @ {dist:.1f}mi, {alt}ft")
     else:
-        print("Nearest: None (waiting for position data)")
+        print("✈️  No aircraft currently tracked")
 
 
 def _matrix_display_run():
-    """Update matrix display with current nearest aircraft information."""
-    global nearest_aircraft
+    """Update matrix display with current aircraft, cycling through all tracked aircraft."""
+    global nearest_aircraft, current_aircraft_index, last_rotation_time
     
     now_local = datetime.datetime.now(MATRIX_ZONE)
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
     time_str = now_local.strftime("%I:%M %p")
     
     try:
-        if nearest_aircraft:
-            icao = nearest_aircraft['icao']
-            callsign = nearest_aircraft.get('callsign', 'N/A').strip()
-            distance = nearest_aircraft.get('distance', 0)
-            altitude = nearest_aircraft.get('altitude', 'N/A')
-            groundspeed = nearest_aircraft.get('groundspeed', 'N/A')
+        display_aircraft = None
+        
+        # Get all tracked aircraft sorted by distance (nearest first), then by last_seen
+        if aircraft_tracking:
+            sorted_aircraft = sorted(
+                aircraft_tracking.values(),
+                key=lambda a: (a.get('distance', float('inf')), -a['last_seen'].timestamp())
+            )
             
-            print(f"Matrix Display Update [{time_str}]:")
-            print(f"  ICAO: {icao}")
-            print(f"  Callsign: {callsign}")
-            print(f"  Distance: {distance:.2f} mi")
-            print(f"  Altitude: {altitude} ft")
-            print(f"  Speed: {groundspeed} kt")
-            print(f"  Has route_info: {'route_info' in nearest_aircraft}")
+            # Check if it's time to rotate to next aircraft
+            time_since_rotation = (now_utc - last_rotation_time).total_seconds()
+            if time_since_rotation >= AIRCRAFT_DISPLAY_DURATION:
+                current_aircraft_index = (current_aircraft_index + 1) % len(sorted_aircraft)
+                last_rotation_time = now_utc
+            
+            # Ensure index is valid
+            if current_aircraft_index >= len(sorted_aircraft):
+                current_aircraft_index = 0
+            
+            display_aircraft = sorted_aircraft[current_aircraft_index]
+        else:
+            # Reset rotation when no aircraft
+            current_aircraft_index = 0
+            last_rotation_time = now_utc
+        
+        if display_aircraft:
+            icao = display_aircraft['icao']
+            callsign = display_aircraft.get('callsign', 'N/A').strip()
+            distance = display_aircraft.get('distance')  # May be None
+            altitude = display_aircraft.get('altitude', 'N/A')
+            groundspeed = display_aircraft.get('groundspeed', 'N/A')
+            route_info = display_aircraft.get('route_info')
+            
+            # Build compact status message with rotation info
+            total_aircraft = len(aircraft_tracking)
+            status = f"🖥️  Display: {callsign} [{current_aircraft_index + 1}/{total_aircraft}]"
+            if distance is not None:
+                status += f" @ {distance:.1f}mi"
+            status += f", {altitude}ft, {groundspeed}kt"
+            if route_info:
+                origin = route_info.get('origin', '')[:3]
+                dest = route_info.get('destination', '')[:3]
+                if origin and dest:
+                    status += f" | {origin}→{dest}"
+            print(status)
             
             # Update matrix display with aircraft data
-            display_aircraft_info(now_local, nearest_aircraft)
-            print(f"  Matrix display updated successfully")
+            display_aircraft_info(now_local, display_aircraft)
         else:
-            print(f"Matrix Display Update [{time_str}]: No aircraft tracked")
-            # Update matrix display with no aircraft
+            # No aircraft - just show time without "No Aircraft" message
             display_aircraft_info(now_local, None)
     except Exception as e:
         import traceback
@@ -254,16 +296,17 @@ def process_adsb_message(message: str):
     import time
     decoded = adsb_decoder.decode_message(message, timestamp=time.time())
     if decoded:
-        msg_type = get_message_type(message)
-        tc = decoded.get('typecode')
+        icao = decoded.get('icao', 'N/A')
         
-        # Log position messages (TC 9-18 are airborne position)
-        if tc and 9 <= tc <= 18:
-            print(f"Position message: TC={tc}, ICAO={decoded.get('icao')}, has_lat={'latitude' in decoded}, has_lon={'longitude' in decoded}")
-        
-        # Print callsigns and successful position decodes
-        if 'latitude' in decoded or 'callsign' in decoded:
-            print(f"Decoded {msg_type}: ICAO={decoded.get('icao', 'N/A')}, keys={list(decoded.keys())}")
+        # Log significant events only
+        if 'callsign' in decoded:
+            callsign = decoded.get('callsign', '').strip()
+            print(f"✈️  New: {callsign} ({icao})")
+        elif 'latitude' in decoded:
+            # First position decode for this aircraft
+            if icao in aircraft_tracking and 'latitude' not in aircraft_tracking[icao]:
+                callsign = aircraft_tracking[icao].get('callsign', icao)
+                print(f"📍 Position: {callsign} @ {decoded['latitude']:.4f}, {decoded['longitude']:.4f}")
         
         update_aircraft_position(decoded)
 
@@ -399,8 +442,12 @@ def start_tcp_listener():
                                         if msg_count % 100 == 0:
                                             print(f"Processed {msg_count} messages, last: {hex_msg[:14]}")
                                         process_adsb_message(hex_msg)
+                                except (AttributeError, ValueError, TypeError) as e:
+                                    # Skip malformed messages silently
+                                    pass
                                 except Exception as e:
-                                    print(f"Error processing message: {e}")
+                                    if str(e) != 'timestamp':  # Suppress timestamp errors
+                                        print(f"Error processing message: {e}")
                                 
                                 buffer = buffer[msg_len:]
                         

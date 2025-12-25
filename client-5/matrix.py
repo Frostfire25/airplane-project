@@ -116,8 +116,13 @@ class MatrixDisplay:
     
     def _center_text(self, text: str, font) -> int:
         """Calculate x position to center text."""
-        # Estimate text width (default font is roughly 6 pixels per char)
-        text_width = len(text) * 6
+        try:
+            # Try to get actual text width from font
+            bbox = font.getbbox(text)
+            text_width = bbox[2] - bbox[0]
+        except:
+            # Fallback to estimation
+            text_width = len(text) * 6
         return (self.width - text_width) // 2
     
     def _init_hardware(self):
@@ -171,9 +176,27 @@ class MatrixDisplay:
             self.framebuffer = None
     
     def _get_font(self, size: str = 'medium'):
-        """Load appropriate font - using default PIL font for reliability."""
-        # BDF fonts don't work well with PIL ImageFont.load()
-        # Just use the default font which is reliable
+        """Load appropriate PIL font based on size."""
+        try:
+            if size == 'large':
+                # Use 10x20 for large text (time display)
+                font_path = self.font_dir / '10x20.pil'
+            elif size == 'medium':
+                # Use 7x13 for medium text (aircraft info)
+                font_path = self.font_dir / '7x13.pil'
+            elif size == 'small':
+                # Use 6x10 for small text
+                font_path = self.font_dir / '6x10.pil'
+            else:
+                font_path = self.font_dir / '7x13.pil'
+            
+            # Try to load the PIL font
+            if font_path.exists():
+                return ImageFont.load(str(font_path))
+        except Exception as e:
+            pass
+        
+        # Fallback to default font
         return ImageFont.load_default()
     
     def _draw_text(self, draw, text: str, x: int, y: int, color: tuple, font):
@@ -294,8 +317,6 @@ class MatrixDisplay:
             return
         
         try:
-            print(f"Drawing to matrix: aircraft_data={'present' if aircraft_data else 'None'}")
-            
             # Create a fresh canvas
             self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
             draw = ImageDraw.Draw(self.canvas)
@@ -306,20 +327,20 @@ class MatrixDisplay:
             # Format time - always display with AM/PM
             time_str = current_time.strftime("%I:%M %p")
             
-            # Draw time at top (centered, shifted 4px right) - use large font
-            font = self._get_font('large')
-            x_pos = self._center_text(time_str, font) + 4
+            # Draw time at top (centered, shifted 4px right) - use medium font
+            font = self._get_font('medium')
+            x_pos = self._center_text(time_str, font)
             
             # Track revealed elements
             revealed_elements = []
             
-            # Draw time without animation
+            # Always draw border and time (even when no aircraft)
+            self._draw_border(draw, brightness_factor)
             adjusted_color = self._apply_brightness(self.color_time, brightness_factor)
             self._draw_text(draw, time_str, x_pos, 4, adjusted_color, font)
             revealed_elements.append((time_str, x_pos, 4, adjusted_color, font))
             
             if aircraft_data:
-                print("Drawing aircraft data to matrix")
                 # Draw aircraft information
                 y_offset = 24
                 
@@ -327,7 +348,6 @@ class MatrixDisplay:
                 callsign = aircraft_data.get('callsign', aircraft_data.get('icao', 'N/A'))
                 if callsign and callsign != 'N/A':
                     callsign = callsign.strip()[:10]  # Limit length
-                    print(f"  Drawing callsign: {callsign}")
                     
                     # Center the callsign
                     callsign_width = len(callsign) * 6  # Estimate 6 pixels per character for medium font
@@ -348,7 +368,6 @@ class MatrixDisplay:
                         origin_short = origin[1:] if len(origin) > 1 else origin
                         dest_short = dest[1:] if len(dest) > 1 else dest
                         route_str = f"{origin_short}-{dest_short}"
-                        print(f"  Drawing route: {route_str}")
                         
                         # Center the route
                         route_width = len(route_str) * 6  # Estimate 6 pixels per character
@@ -359,29 +378,46 @@ class MatrixDisplay:
                         revealed_elements.append((route_str, route_x, y_offset, adjusted_route_color, self._get_font('medium')))
                         y_offset += 12
                 
-                # Distance with animation - centered
+                # Distance with animation - centered (or show altitude/speed if no distance)
                 distance = aircraft_data.get('distance')
+                altitude = aircraft_data.get('altitude')
+                groundspeed = aircraft_data.get('groundspeed')
+                
                 if distance is not None:
                     dist_str = f"{distance:.1f}mi"
-                    print(f"  Drawing distance: {dist_str}")
                     
                     # Center the distance
                     dist_width = len(dist_str) * 6  # Estimate 6 pixels per character
                     dist_x = (self.width - dist_width) // 2
                     
                     self._draw_text_animated(dist_str, dist_x, y_offset, self.color_distance, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
-            else:
-                print("Drawing 'No Aircraft' message")
-                # No aircraft - show message
-                adjusted_no_aircraft_color = self._apply_brightness(self.color_no_aircraft, brightness_factor)
-                self._draw_text(draw, "No Aircraft", 6, 28, adjusted_no_aircraft_color, self._get_font('medium'))
-                self._draw_text(draw, "Tracked", 14, 42, adjusted_no_aircraft_color, self._get_font('medium'))
+                else:
+                    # No position data - show altitude and speed instead
+                    if altitude is not None:
+                        alt_str = f"{altitude}ft"
+                        
+                        # Center the altitude
+                        alt_width = len(alt_str) * 6
+                        alt_x = (self.width - alt_width) // 2
+                        
+                        self._draw_text_animated(alt_str, alt_x, y_offset, self.color_altitude, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
+                        adjusted_alt_color = self._apply_brightness(self.color_altitude, brightness_factor)
+                        revealed_elements.append((alt_str, alt_x, y_offset, adjusted_alt_color, self._get_font('medium')))
+                        y_offset += 12
+                    
+                    if groundspeed is not None:
+                        spd_str = f"{groundspeed}kt"
+                        
+                        # Center the speed
+                        spd_width = len(spd_str) * 6
+                        spd_x = (self.width - spd_width) // 2
+                        
+                        self._draw_text_animated(spd_str, spd_x, y_offset, self.color_speed, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
+            # If no aircraft_data, just show border and time (already drawn above)
             
             # Single update after all text is drawn
-            print("Updating framebuffer and showing on matrix")
             self.framebuffer[:] = np.asarray(self.canvas)
             self.matrix.show()
-            print("Matrix update complete")
             
         except Exception as e:
             import traceback
@@ -498,7 +534,6 @@ def display_aircraft_info(current_time: datetime.datetime, aircraft_data: Option
         current_time: Current datetime
         aircraft_data: Dictionary with aircraft info or None
     """
-    print(f"display_aircraft_info called with aircraft_data: {type(aircraft_data)} = {aircraft_data}")
     matrix = get_matrix_display()
     matrix.display_time_and_aircraft(current_time, aircraft_data)
 
