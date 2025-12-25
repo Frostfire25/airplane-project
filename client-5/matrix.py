@@ -52,6 +52,12 @@ class MatrixDisplay:
         self.color_altitude = self._parse_color(os.getenv('MATRIX_COLOR_ALTITUDE', '0,255,0'))  # Green
         self.color_speed = self._parse_color(os.getenv('MATRIX_COLOR_SPEED', '255,100,255'))  # Pink
         self.color_no_aircraft = self._parse_color(os.getenv('MATRIX_COLOR_NO_AIRCRAFT', '255,0,0'))  # Red
+        self.color_border = self._parse_color(os.getenv('MATRIX_COLOR_BORDER', '100,100,100'))  # Gray
+        
+        # Brightness configuration
+        self.brightness_max = int(os.getenv('MATRIX_BRIGHTNESS_MAX', '255'))
+        self.brightness_min = int(os.getenv('MATRIX_BRIGHTNESS_MIN', '50'))
+        self.color_border = self._parse_color(os.getenv('MATRIX_COLOR_BORDER', '100,100,100'))  # Gray
         
         # Font paths - look in the fonts folder next to this file
         self.font_dir = Path(__file__).parent / 'fonts'
@@ -73,6 +79,46 @@ class MatrixDisplay:
             return (int(r.strip()), int(g.strip()), int(b.strip()))
         except:
             return (255, 255, 255)  # Default white
+    
+    def _apply_brightness(self, color: tuple, brightness_factor: float) -> tuple:
+        """Apply brightness factor to a color."""
+        return tuple(int(c * brightness_factor) for c in color)
+    
+    def _calculate_brightness_factor(self, current_time: datetime.datetime) -> float:
+        """Calculate brightness factor based on time of day (0.0 to 1.0)."""
+        # Get hour as decimal (e.g., 13.5 for 1:30 PM)
+        hour_decimal = current_time.hour + current_time.minute / 60.0
+        
+        # Noon is 12.0, midnight is 0.0 or 24.0
+        # Calculate how far we are from noon (in hours)
+        distance_from_noon = abs(hour_decimal - 12.0)
+        
+        # Maximum distance from noon is 12 hours
+        # At noon: distance = 0, brightness = max
+        # At midnight: distance = 12, brightness = min
+        brightness_range = self.brightness_max - self.brightness_min
+        brightness = self.brightness_max - (distance_from_noon / 12.0) * brightness_range
+        
+        # Return as factor (0.0 to 1.0)
+        return brightness / 255.0
+    
+    def _draw_border(self, draw, brightness_factor: float = 1.0):
+        """Draw a 1-pixel border around the entire display."""
+        border_color = self._apply_brightness(self.color_border, brightness_factor)
+        # Top border
+        draw.line([(0, 0), (self.width - 1, 0)], fill=border_color)
+        # Bottom border
+        draw.line([(0, self.height - 1), (self.width - 1, self.height - 1)], fill=border_color)
+        # Left border
+        draw.line([(0, 0), (0, self.height - 1)], fill=border_color)
+        # Right border
+        draw.line([(self.width - 1, 0), (self.width - 1, self.height - 1)], fill=border_color)
+    
+    def _center_text(self, text: str, font) -> int:
+        """Calculate x position to center text."""
+        # Estimate text width (default font is roughly 6 pixels per char)
+        text_width = len(text) * 6
+        return (self.width - text_width) // 2
     
     def _init_hardware(self):
         """Initialize the LED matrix hardware."""
@@ -125,8 +171,9 @@ class MatrixDisplay:
             self.framebuffer = None
     
     def _get_font(self, size: str = 'medium'):
-        """Load appropriate BDF font."""
-        # Just use the default font for now - it works reliably
+        """Load appropriate font - using default PIL font for reliability."""
+        # BDF fonts don't work well with PIL ImageFont.load()
+        # Just use the default font which is reliable
         return ImageFont.load_default()
     
     def _draw_text(self, draw, text: str, x: int, y: int, color: tuple, font):
@@ -141,6 +188,73 @@ class MatrixDisplay:
             font: Font to use
         """
         draw.text((x, y), text, fill=color, font=font)
+    
+    def _draw_text_animated(self, text: str, x: int, y: int, color: tuple, font, previous_elements: list = None, delay: float = 0.05, brightness_factor: float = 1.0):
+        """
+        Draw text with Vestaboard-style character-by-character animation.
+        Characters scramble and then settle into place one by one.
+        Previous elements stay on screen during animation.
+        
+        Args:
+            text: Text to display
+            x, y: Position
+            color: RGB color tuple
+            font: Font to use
+            previous_elements: List of (text, x, y, color, font) tuples for already-revealed elements
+            delay: Delay between revealing each character (seconds)
+            brightness_factor: Factor to adjust color brightness (0.0 to 1.0)
+        """
+        # Apply brightness factor to color
+        color = self._apply_brightness(color, brightness_factor)
+        import random
+        import time
+        
+        # Characters to use for scrambling effect
+        scramble_chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:-'
+        
+        if previous_elements is None:
+            previous_elements = []
+        
+        # Animate each character position
+        for i in range(len(text) + 1):
+            # Clear canvas and redraw from scratch
+            self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+            draw = ImageDraw.Draw(self.canvas)
+            
+            # Draw border first
+            self._draw_border(draw, brightness_factor)
+            
+            # Draw all previous elements (already revealed)
+            for prev_text, prev_x, prev_y, prev_color, prev_font in previous_elements:
+                draw.text((prev_x, prev_y), prev_text, fill=prev_color, font=prev_font)
+            
+            # Build the current display text: revealed chars + scrambled chars
+            display_text = ""
+            for j, char in enumerate(text):
+                if j < i:
+                    # Character is revealed
+                    display_text += char
+                else:
+                    # Character is still scrambled
+                    if char == ' ':
+                        display_text += ' '
+                    else:
+                        display_text += random.choice(scramble_chars)
+            
+            # Draw the current text being animated
+            draw.text((x, y), display_text, fill=color, font=font)
+            
+            # Update framebuffer and display
+            self.framebuffer[:] = np.asarray(self.canvas)
+            try:
+                self.matrix.show()
+            except TimeoutError:
+                # If hardware times out, continue animation in memory
+                pass
+            
+            # Small delay before next character
+            if i < len(text):
+                time.sleep(delay)
     
     def clear(self):
         """Clear the matrix display."""
@@ -186,51 +300,82 @@ class MatrixDisplay:
             self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
             draw = ImageDraw.Draw(self.canvas)
             
+            # Calculate brightness factor based on time of day
+            brightness_factor = self._calculate_brightness_factor(current_time)
+            
             # Format time - always display with AM/PM
             time_str = current_time.strftime("%I:%M %p")
             
-            # Draw time at top (centered)
+            # Draw time at top (centered, shifted 4px right) - use large font
             font = self._get_font('large')
-            # Simple centering - estimate 5 pixels per character
-            text_width = len(time_str) * 5
-            x_pos = (self.width - text_width) // 2
-            self._draw_text(draw, time_str, x_pos, 2, self.color_time, font)
+            x_pos = self._center_text(time_str, font) + 4
+            
+            # Track revealed elements
+            revealed_elements = []
+            
+            # Draw time without animation
+            adjusted_color = self._apply_brightness(self.color_time, brightness_factor)
+            self._draw_text(draw, time_str, x_pos, 4, adjusted_color, font)
+            revealed_elements.append((time_str, x_pos, 4, adjusted_color, font))
             
             if aircraft_data:
                 print("Drawing aircraft data to matrix")
                 # Draw aircraft information
-                y_offset = 20
+                y_offset = 24
                 
-                # Callsign
+                # Callsign with animation - centered
                 callsign = aircraft_data.get('callsign', aircraft_data.get('icao', 'N/A'))
                 if callsign and callsign != 'N/A':
                     callsign = callsign.strip()[:10]  # Limit length
                     print(f"  Drawing callsign: {callsign}")
-                    self._draw_text(draw, callsign, 2, y_offset, self.color_callsign, self._get_font('medium'))
+                    
+                    # Center the callsign
+                    callsign_width = len(callsign) * 6  # Estimate 6 pixels per character for medium font
+                    callsign_x = (self.width - callsign_width) // 2
+                    
+                    self._draw_text_animated(callsign, callsign_x, y_offset, self.color_callsign, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
+                    adjusted_callsign_color = self._apply_brightness(self.color_callsign, brightness_factor)
+                    revealed_elements.append((callsign, callsign_x, y_offset, adjusted_callsign_color, self._get_font('medium')))
                     y_offset += 12
                 
-                # Route information (origin -> destination)
+                # Route information (origin -> destination) with animation - centered
                 route_info = aircraft_data.get('route_info')
                 if route_info:
                     origin = route_info.get('origin', '')[:4]
                     dest = route_info.get('destination', '')[:4]
                     if origin and dest:
-                        route_str = f"{origin}-{dest}"
+                        # Remove first character from airport codes
+                        origin_short = origin[1:] if len(origin) > 1 else origin
+                        dest_short = dest[1:] if len(dest) > 1 else dest
+                        route_str = f"{origin_short}-{dest_short}"
                         print(f"  Drawing route: {route_str}")
-                        self._draw_text(draw, route_str, 2, y_offset, self.color_callsign, self._get_font('medium'))
+                        
+                        # Center the route
+                        route_width = len(route_str) * 6  # Estimate 6 pixels per character
+                        route_x = (self.width - route_width) // 2
+                        
+                        self._draw_text_animated(route_str, route_x, y_offset, self.color_callsign, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
+                        adjusted_route_color = self._apply_brightness(self.color_callsign, brightness_factor)
+                        revealed_elements.append((route_str, route_x, y_offset, adjusted_route_color, self._get_font('medium')))
                         y_offset += 12
                 
-                # Distance
+                # Distance with animation - centered
                 distance = aircraft_data.get('distance')
                 if distance is not None:
                     dist_str = f"{distance:.1f}mi"
                     print(f"  Drawing distance: {dist_str}")
-                    self._draw_text(draw, dist_str, 2, y_offset, self.color_distance, self._get_font('medium'))
+                    
+                    # Center the distance
+                    dist_width = len(dist_str) * 6  # Estimate 6 pixels per character
+                    dist_x = (self.width - dist_width) // 2
+                    
+                    self._draw_text_animated(dist_str, dist_x, y_offset, self.color_distance, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
             else:
                 print("Drawing 'No Aircraft' message")
                 # No aircraft - show message
-                self._draw_text(draw, "No Aircraft", 6, 28, self.color_no_aircraft, self._get_font('medium'))
-                self._draw_text(draw, "Tracked", 14, 42, self.color_no_aircraft, self._get_font('medium'))
+                adjusted_no_aircraft_color = self._apply_brightness(self.color_no_aircraft, brightness_factor)
+                self._draw_text(draw, "No Aircraft", 6, 28, adjusted_no_aircraft_color, self._get_font('medium'))
+                self._draw_text(draw, "Tracked", 14, 42, adjusted_no_aircraft_color, self._get_font('medium'))
             
             # Single update after all text is drawn
             print("Updating framebuffer and showing on matrix")
