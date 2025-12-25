@@ -133,6 +133,31 @@ def update_aircraft_position(decoded_data: dict):
         if key in decoded_data and decoded_data[key] is not None:
             aircraft[key] = decoded_data[key]
     
+    # Try to get route information if we have a callsign (for any aircraft, not just nearest)
+    callsign = aircraft.get('callsign', '').strip()
+    if callsign and 'route_info' not in aircraft:
+        # Check cache first (cache stores None for failed lookups to avoid retrying)
+        if callsign in route_cache:
+            route_info = route_cache[callsign]
+            if route_info:  # Only populate if route info was found
+                aircraft['route_info'] = route_info
+        else:
+            # Fetch from FlightAware (only once per callsign)
+            try:
+                route_info = flightaware_scraper.get_flight_info(callsign)
+                if route_info:
+                    route_cache[callsign] = route_info
+                    aircraft['route_info'] = route_info
+                    origin = route_info.get('origin', '?')[:3]
+                    dest = route_info.get('destination', '?')[:3]
+                    print(f"🛫 Route: {callsign} {origin}→{dest}")
+                else:
+                    # Cache the failed lookup to avoid retrying
+                    route_cache[callsign] = None
+            except Exception as e:
+                # Cache the failed lookup to avoid retrying
+                route_cache[callsign] = None
+    
     # Calculate distance if we have position
     if 'latitude' in aircraft and 'longitude' in aircraft:
         aircraft['distance'] = calculate_distance(
@@ -143,30 +168,15 @@ def update_aircraft_position(decoded_data: dict):
         # Update nearest aircraft
         if nearest_aircraft is None or aircraft['distance'] < nearest_aircraft.get('distance', float('inf')):
             nearest_aircraft = aircraft.copy()
-            
-            # Try to get route information if we have a callsign
-            callsign = nearest_aircraft.get('callsign', '').strip()
-            
-            # Look up route if we have a callsign and don't have route info yet
-            if callsign and 'route_info' not in nearest_aircraft:
-                # Check cache first
-                if callsign in route_cache:
-                    nearest_aircraft['route_info'] = route_cache[callsign]
-                else:
-                    # Fetch from FlightAware
-                    try:
-                        route_info = flightaware_scraper.get_flight_info(callsign)
-                        if route_info:
-                            route_cache[callsign] = route_info
-                            nearest_aircraft['route_info'] = route_info
-                            origin = route_info.get('origin', '?')[:3]
-                            dest = route_info.get('destination', '?')[:3]
-                            print(f"🛫 Route: {callsign} {origin}→{dest}")
-                    except Exception as e:
-                        pass  # Silently fail route lookups
-            
             callsign = aircraft.get('callsign', icao)
-            print(f"🎯 Nearest: {callsign} @ {aircraft['distance']:.1f}mi")
+            route_info = aircraft.get('route_info')
+            route_str = ""
+            if route_info:
+                origin = route_info.get('origin', '')[:3]
+                dest = route_info.get('destination', '')[:3]
+                if origin and dest:
+                    route_str = f" | {origin}→{dest}"
+            print(f"🎯 Nearest: {callsign} @ {aircraft['distance']:.1f}mi{route_str}")
 
 
 def _adsb_poll_run():
@@ -199,10 +209,18 @@ def _adsb_poll_run():
         aircraft_list = []
         for data in aircraft_tracking.values():
             callsign = data.get('callsign', data['icao'])
+            route_info = data.get('route_info')
+            route_str = ""
+            if route_info:
+                origin = route_info.get('origin', '')[:3]
+                dest = route_info.get('destination', '')[:3]
+                if origin and dest:
+                    route_str = f" {origin}→{dest}"
+            
             if 'distance' in data:
-                aircraft_list.append(f"{callsign} ({data['distance']:.1f}mi)")
+                aircraft_list.append(f"{callsign}{route_str} ({data['distance']:.1f}mi)")
             else:
-                aircraft_list.append(f"{callsign}")
+                aircraft_list.append(f"{callsign}{route_str}")
         
         if aircraft_list:
             status_parts.append("| " + ", ".join(aircraft_list))
@@ -213,7 +231,14 @@ def _adsb_poll_run():
             callsign = nearest_aircraft.get('callsign', nearest_aircraft['icao'])
             dist = nearest_aircraft.get('distance', 0)
             alt = nearest_aircraft.get('altitude', 'N/A')
-            print(f"   Nearest: {callsign} @ {dist:.1f}mi, {alt}ft")
+            route_info = nearest_aircraft.get('route_info')
+            route_str = ""
+            if route_info:
+                origin = route_info.get('origin', '')[:3]
+                dest = route_info.get('destination', '')[:3]
+                if origin and dest:
+                    route_str = f" | {origin}→{dest}"
+            print(f"   Nearest: {callsign} @ {dist:.1f}mi, {alt}ft{route_str}")
     else:
         print("✈️  No aircraft currently tracked")
 
@@ -272,6 +297,9 @@ def _matrix_display_run():
                 if origin and dest:
                     status += f" | {origin}→{dest}"
             print(status)
+            
+            # Debug: Show what's being sent to matrix display
+            print(f"   DEBUG: route_info in display_aircraft = {display_aircraft.get('route_info')}")
             
             # Update matrix display with aircraft data
             display_aircraft_info(now_local, display_aircraft)

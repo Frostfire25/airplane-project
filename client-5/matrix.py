@@ -421,6 +421,7 @@ class MatrixDisplay:
                 
                 # Route information (origin -> destination) with animation - centered
                 route_info = aircraft_data.get('route_info')
+                print(f"   DEBUG matrix.py: route_info = {route_info}")
                 if route_info:
                     origin = route_info.get('origin', '')[:4]
                     dest = route_info.get('destination', '')[:4]
