@@ -1,0 +1,8 @@
+python-dotenv
+requests
+pydantic>=1.10
+apscheduler>=3.10
+python-dateutil
+Adafruit-Blinka-Raspberry-Pi5-Piomatter
+numpy
+Pillow

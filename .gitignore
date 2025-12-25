@@ -105,3 +105,5 @@ request.log
 requests.log
 
 *.env
+
+Adafruit_Blinka_Raspberry_Pi5_Piomatter/
