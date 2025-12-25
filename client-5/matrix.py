@@ -62,6 +62,10 @@ class MatrixDisplay:
         # Font paths - look in the fonts folder next to this file
         self.font_dir = Path(__file__).parent / 'fonts'
         
+        # Animation configuration
+        self.animation_delay = int(os.getenv('MATRIX_ANIMATION_DELAY_MS', '300')) / 1000.0  # Convert ms to seconds
+        self.scramble_opacity = int(os.getenv('MATRIX_SCRAMBLE_OPACITY', '20')) / 100.0  # Convert percentage to factor
+        
         # Initialize matrix hardware
         self.matrix = None
         self.canvas = None
@@ -184,6 +188,9 @@ class MatrixDisplay:
             elif size == 'medium':
                 # Use 7x13 for medium text (aircraft info)
                 font_path = self.font_dir / '7x13.pil'
+            elif size == 'medium-small':
+                # Use 6x13 for medium-large text
+                font_path = self.font_dir / '6x13.pil'
             elif size == 'small':
                 # Use 6x10 for small text
                 font_path = self.font_dir / '6x10.pil'
@@ -215,7 +222,7 @@ class MatrixDisplay:
     def _draw_text_animated(self, text: str, x: int, y: int, color: tuple, font, previous_elements: list = None, delay: float = 0.05, brightness_factor: float = 1.0):
         """
         Draw text with Vestaboard-style character-by-character animation.
-        Characters scramble and then settle into place one by one.
+        Characters scramble rapidly and then settle into place one by one.
         Previous elements stay on screen during animation.
         
         Args:
@@ -224,7 +231,7 @@ class MatrixDisplay:
             color: RGB color tuple
             font: Font to use
             previous_elements: List of (text, x, y, color, font) tuples for already-revealed elements
-            delay: Delay between revealing each character (seconds)
+            delay: Delay before revealing each character (seconds)
             brightness_factor: Factor to adjust color brightness (0.0 to 1.0)
         """
         # Apply brightness factor to color
@@ -235,36 +242,95 @@ class MatrixDisplay:
         # Characters to use for scrambling effect
         scramble_chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:-'
         
+        # Fast flip rate for scrambling effect (milliseconds between scramble updates)
+        flip_rate = 0.05  # 50ms = 20 flips per second
+        
         if previous_elements is None:
             previous_elements = []
         
         # Animate each character position
-        for i in range(len(text) + 1):
-            # Clear canvas and redraw from scratch
+        for i in range(len(text)):
+            # Calculate how many scramble iterations to show before reveal
+            num_flips = int(delay / flip_rate)
+            
+            # Rapidly scramble before revealing this character
+            for flip in range(num_flips):
+                # Clear canvas and redraw from scratch
+                self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+                draw = ImageDraw.Draw(self.canvas)
+                
+                # Draw border first
+                self._draw_border(draw, brightness_factor)
+                
+                # Draw all previous elements (already revealed)
+                for prev_text, prev_x, prev_y, prev_color, prev_font in previous_elements:
+                    draw.text((prev_x, prev_y), prev_text, fill=prev_color, font=prev_font)
+                
+                # Build the current display text: revealed chars + scrambled chars
+                display_text = ""
+                for j, char in enumerate(text):
+                    if j < i:
+                        # Character is already revealed
+                        display_text += char
+                    else:
+                        # Character is still scrambling
+                        if char == ' ':
+                            display_text += ' '
+                        else:
+                            display_text += random.choice(scramble_chars)
+                
+                # Draw revealed characters at full brightness
+                revealed_text = display_text[:i]
+                if revealed_text:
+                    draw.text((x, y), revealed_text, fill=color, font=font)
+                
+                # Draw scrambling characters at reduced opacity
+                scramble_text = display_text[i:]
+                if scramble_text:
+                    # Calculate width of revealed text to offset scrambling text
+                    try:
+                        revealed_bbox = font.getbbox(revealed_text) if revealed_text else (0, 0, 0, 0)
+                        scramble_x = x + (revealed_bbox[2] - revealed_bbox[0])
+                    except:
+                        scramble_x = x + len(revealed_text) * 6
+                    
+                    # Apply opacity to color for scrambling characters
+                    scramble_color = tuple(int(c * self.scramble_opacity) for c in color)
+                    draw.text((scramble_x, y), scramble_text, fill=scramble_color, font=font)
+                
+                # Update framebuffer and display
+                self.framebuffer[:] = np.asarray(self.canvas)
+                try:
+                    self.matrix.show()
+                except TimeoutError:
+                    # If hardware times out, continue animation in memory
+                    pass
+                
+                # Small delay before next scramble
+                time.sleep(flip_rate)
+            
+            # Now reveal the character by drawing it one final time
             self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
             draw = ImageDraw.Draw(self.canvas)
             
             # Draw border first
             self._draw_border(draw, brightness_factor)
             
-            # Draw all previous elements (already revealed)
+            # Draw all previous elements
             for prev_text, prev_x, prev_y, prev_color, prev_font in previous_elements:
                 draw.text((prev_x, prev_y), prev_text, fill=prev_color, font=prev_font)
             
-            # Build the current display text: revealed chars + scrambled chars
+            # Build text with this character now revealed
             display_text = ""
             for j, char in enumerate(text):
-                if j < i:
-                    # Character is revealed
+                if j <= i:
                     display_text += char
                 else:
-                    # Character is still scrambled
                     if char == ' ':
                         display_text += ' '
                     else:
                         display_text += random.choice(scramble_chars)
             
-            # Draw the current text being animated
             draw.text((x, y), display_text, fill=color, font=font)
             
             # Update framebuffer and display
@@ -272,12 +338,7 @@ class MatrixDisplay:
             try:
                 self.matrix.show()
             except TimeoutError:
-                # If hardware times out, continue animation in memory
                 pass
-            
-            # Small delay before next character
-            if i < len(text):
-                time.sleep(delay)
     
     def clear(self):
         """Clear the matrix display."""
@@ -353,9 +414,9 @@ class MatrixDisplay:
                     callsign_width = len(callsign) * 6  # Estimate 6 pixels per character for medium font
                     callsign_x = (self.width - callsign_width) // 2
                     
-                    self._draw_text_animated(callsign, callsign_x, y_offset, self.color_callsign, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
+                    self._draw_text_animated(callsign, callsign_x, y_offset, self.color_callsign, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
                     adjusted_callsign_color = self._apply_brightness(self.color_callsign, brightness_factor)
-                    revealed_elements.append((callsign, callsign_x, y_offset, adjusted_callsign_color, self._get_font('medium')))
+                    revealed_elements.append((callsign, callsign_x, y_offset, adjusted_callsign_color, self._get_font('medium-small')))
                     y_offset += 12
                 
                 # Route information (origin -> destination) with animation - centered
@@ -373,9 +434,9 @@ class MatrixDisplay:
                         route_width = len(route_str) * 6  # Estimate 6 pixels per character
                         route_x = (self.width - route_width) // 2
                         
-                        self._draw_text_animated(route_str, route_x, y_offset, self.color_callsign, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
+                        self._draw_text_animated(route_str, route_x, y_offset, self.color_callsign, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
                         adjusted_route_color = self._apply_brightness(self.color_callsign, brightness_factor)
-                        revealed_elements.append((route_str, route_x, y_offset, adjusted_route_color, self._get_font('medium')))
+                        revealed_elements.append((route_str, route_x, y_offset, adjusted_route_color, self._get_font('medium-small')))
                         y_offset += 12
                 
                 # Distance with animation - centered (or show altitude/speed if no distance)
@@ -390,7 +451,7 @@ class MatrixDisplay:
                     dist_width = len(dist_str) * 6  # Estimate 6 pixels per character
                     dist_x = (self.width - dist_width) // 2
                     
-                    self._draw_text_animated(dist_str, dist_x, y_offset, self.color_distance, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
+                    self._draw_text_animated(dist_str, dist_x, y_offset, self.color_distance, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
                 else:
                     # No position data - show altitude and speed instead
                     if altitude is not None:
@@ -400,9 +461,9 @@ class MatrixDisplay:
                         alt_width = len(alt_str) * 6
                         alt_x = (self.width - alt_width) // 2
                         
-                        self._draw_text_animated(alt_str, alt_x, y_offset, self.color_altitude, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
+                        self._draw_text_animated(alt_str, alt_x, y_offset, self.color_altitude, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
                         adjusted_alt_color = self._apply_brightness(self.color_altitude, brightness_factor)
-                        revealed_elements.append((alt_str, alt_x, y_offset, adjusted_alt_color, self._get_font('medium')))
+                        revealed_elements.append((alt_str, alt_x, y_offset, adjusted_alt_color, self._get_font('medium-small')))
                         y_offset += 12
                     
                     if groundspeed is not None:
@@ -412,7 +473,7 @@ class MatrixDisplay:
                         spd_width = len(spd_str) * 6
                         spd_x = (self.width - spd_width) // 2
                         
-                        self._draw_text_animated(spd_str, spd_x, y_offset, self.color_speed, self._get_font('medium'), revealed_elements, delay=0.15, brightness_factor=brightness_factor)
+                        self._draw_text_animated(spd_str, spd_x, y_offset, self.color_speed, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
             # If no aircraft_data, just show border and time (already drawn above)
             
             # Single update after all text is drawn
