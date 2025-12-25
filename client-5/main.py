@@ -3,32 +3,25 @@
 Main entry point for ADS-B aircraft tracking and display system.
 Uses APScheduler for periodic data collection and matrix display updates.
 """
-
-import os
+import sys
+import socket
 import time as _time
 from pathlib import Path
-from dotenv import load_dotenv as _load_dotenv
 
-# Load .env early and set TZ before importing other modules
-try:
-    _base_dir = Path(__file__).resolve().parent
-    _env_file = _base_dir / '.env'
-    _load_dotenv(dotenv_path=_env_file)
-    _env_tz = os.getenv('TZ') or os.getenv('TIMEZONE')
-    if _env_tz:
-        os.environ['TZ'] = _env_tz
-        try:
-            if hasattr(_time, 'tzset'):
-                _time.tzset()
-        except Exception:
-            pass
-except Exception:
-    pass
+# Import dynamic configuration first
+from config import (
+    get_config, get_latitude, get_longitude, get_timezone,
+    get_adsb_host, get_adsb_port, get_adsb_data_type,
+    get_matrix_schedule_seconds, get_adsb_poll_schedule_seconds,
+    get_aircraft_display_duration
+)
 
-import datetime
-import sys
+import os
 import signal
 import threading
+import datetime
+import time
+import traceback
 from dateutil.tz import gettz
 from atexit import register as atexit_register
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -43,10 +36,8 @@ from matrix import display_aircraft_info, matrix_startup, matrix_shutdown
 # Import FlightAware scraper
 from flightaware import FlightAwareScraper
 
-# Load .env located next to this module
-base_dir = Path(__file__).resolve().parent
-env_path = base_dir / '.env'
-_load_dotenv(dotenv_path=env_path)
+# Initialize configuration (loads .env)
+config = get_config()
 
 # Matrix timezone: read from .env (TIMEZONE or TZ) or default to America/New_York
 MATRIX_TIMEZONE = os.getenv('TIMEZONE') or os.getenv('TZ') or 'America/New_York'
@@ -67,7 +58,15 @@ current_aircraft_index = 0
 last_rotation_time = datetime.datetime.now(datetime.timezone.utc)
 
 # Initialize the ADS-B decoder with reference position for single-message decoding
-adsb_decoder = ADSBDecoder(reference_lat=LATITUDE, reference_lon=LONGITUDE)
+# Note: Position is fetched dynamically in calculate_distance
+adsb_decoder = None
+
+def get_adsb_decoder():
+    """Get or create ADS-B decoder with current position."""
+    global adsb_decoder
+    if adsb_decoder is None:
+        adsb_decoder = ADSBDecoder(reference_lat=get_latitude(), reference_lon=get_longitude())
+    return adsb_decoder
 
 # Initialize FlightAware scraper
 flightaware_scraper = FlightAwareScraper()
@@ -158,10 +157,10 @@ def update_aircraft_position(decoded_data: dict):
                 # Cache the failed lookup to avoid retrying
                 route_cache[callsign] = None
     
-    # Calculate distance if we have position
+    # Calculate distance if we have position (use dynamic config values)
     if 'latitude' in aircraft and 'longitude' in aircraft:
         aircraft['distance'] = calculate_distance(
-            LATITUDE, LONGITUDE,
+            get_latitude(), get_longitude(),
             aircraft['latitude'], aircraft['longitude']
         )
         
@@ -247,9 +246,15 @@ def _matrix_display_run():
     """Update matrix display with current aircraft, cycling through all tracked aircraft."""
     global nearest_aircraft, current_aircraft_index, last_rotation_time
     
-    now_local = datetime.datetime.now(MATRIX_ZONE)
+    # Get timezone dynamically
+    tz_name = get_timezone()
+    matrix_zone = gettz(tz_name) or gettz('UTC')
+    now_local = datetime.datetime.now(matrix_zone)
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     time_str = now_local.strftime("%I:%M %p")
+    
+    # Get display duration dynamically
+    display_duration = get_aircraft_display_duration()
     
     try:
         display_aircraft = None
@@ -263,7 +268,7 @@ def _matrix_display_run():
             
             # Check if it's time to rotate to next aircraft
             time_since_rotation = (now_utc - last_rotation_time).total_seconds()
-            if time_since_rotation >= AIRCRAFT_DISPLAY_DURATION:
+            if time_since_rotation >= display_duration:
                 current_aircraft_index = (current_aircraft_index + 1) % len(sorted_aircraft)
                 last_rotation_time = now_utc
             
@@ -322,7 +327,8 @@ def process_adsb_message(message: str):
     
     # Decode with current timestamp
     import time
-    decoded = adsb_decoder.decode_message(message, timestamp=time.time())
+    decoder = get_adsb_decoder()  # Get or create decoder instance
+    decoded = decoder.decode_message(message, timestamp=time.time())
     if decoded:
         icao = decoded.get('icao', 'N/A')
         
@@ -379,29 +385,29 @@ def shutdown_scheduler(signum=None, frame=None):
         print(f"Error shutting down scheduler: {e}")
 
 
-# Ensure scheduler shuts down cleanly on exit or signals
-atexit_register(shutdown_scheduler)
-signal.signal(signal.SIGINT, shutdown_scheduler)
-signal.signal(signal.SIGTERM, shutdown_scheduler)
-
-
 def start_tcp_listener():
     """
     Start a background thread to listen for ADS-B messages from TCP source.
     This connects to dump1090/readsb and processes messages in real-time.
     """
-    import socket
-    import threading
-    
     def tcp_listener_thread():
-        print(f"Connecting to ADS-B source at {ADSB_HOST}:{ADSB_PORT} ({ADSB_DATA_TYPE} format)...")
+        # Get connection parameters dynamically
+        host = get_adsb_host()
+        port = get_adsb_port()
+        data_type = get_adsb_data_type()
+        print(f"Connecting to ADS-B source at {host}:{port} ({data_type} format)...")
         
         while not stop_event.is_set():
             try:
+                # Refresh connection parameters in case they changed
+                host = get_adsb_host()
+                port = get_adsb_port()
+                data_type = get_adsb_data_type()
+                
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(5.0)
-                sock.connect((ADSB_HOST, ADSB_PORT))
-                print(f"Connected to ADS-B source at {ADSB_HOST}:{ADSB_PORT}")
+                sock.connect((host, port))
+                print(f"Connected to ADS-B source at {host}:{port}")
                 
                 buffer = b''
                 while not stop_event.is_set():
@@ -413,8 +419,9 @@ def start_tcp_listener():
                         
                         buffer += data
                         
-                        # Process messages based on format
-                        if ADSB_DATA_TYPE == 'raw':
+                        # Process messages based on format (get format dynamically)
+                        data_type = get_adsb_data_type()
+                        if data_type == 'raw':
                             # Raw format: one message per line, ASCII hex
                             lines = buffer.split(b'\n')
                             buffer = lines[-1]  # Keep incomplete line
@@ -427,7 +434,7 @@ def start_tcp_listener():
                                 except Exception as e:
                                     pass
                         
-                        elif ADSB_DATA_TYPE == 'beast':
+                        elif data_type == 'beast':
                             # Beast binary format parsing - simplified version
                             # Beast format: <esc> "1" + 6 bytes timestamp + mode-S data
                             msg_count = 0
@@ -470,7 +477,12 @@ def start_tcp_listener():
                                         if msg_count % 100 == 0:
                                             print(f"Processed {msg_count} messages, last: {hex_msg[:14]}")
                                         process_adsb_message(hex_msg)
-                                except (AttributeError, ValueError, TypeError) as e:
+                                except AttributeError as e:
+                                    # This should not happen - likely a bug
+                                    print(f"ERROR: AttributeError processing message: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                                except (ValueError, TypeError) as e:
                                     # Skip malformed messages silently
                                     pass
                                 except Exception as e:
@@ -505,9 +517,10 @@ if __name__ == "__main__":
     print("=" * 60)
     print("ADS-B Aircraft Tracking System")
     print("=" * 60)
-    print(f"Location: {LATITUDE}, {LONGITUDE}")
-    print(f"Timezone: {MATRIX_TIMEZONE}")
-    print(f"ADS-B Source: {ADSB_HOST}:{ADSB_PORT} ({ADSB_DATA_TYPE})")
+    print(f"Location: {get_latitude()}, {get_longitude()}")
+    print(f"Timezone: {get_timezone()}")
+    print(f"ADS-B Source: {get_adsb_host()}:{get_adsb_port()} ({get_adsb_data_type()})")
+    print(f"Configuration: Auto-reload enabled")
     print("=" * 60)
     
     # Schedule the ADS-B poll job
@@ -515,7 +528,7 @@ if __name__ == "__main__":
     sched.add_job(
         _adsb_poll_run,
         "interval",
-        seconds=ADSB_POLL_SCHEDULE_SECONDS,
+        seconds=get_adsb_poll_schedule_seconds(),
         id="adsb_poll",
         max_instances=1,
         coalesce=True,
@@ -527,7 +540,7 @@ if __name__ == "__main__":
     sched.add_job(
         _matrix_display_run,
         "interval",
-        seconds=MATRIX_SCHEDULE_SECONDS,
+        seconds=get_matrix_schedule_seconds(),
         id="matrix_display",
         max_instances=1,
         coalesce=True,
@@ -546,11 +559,12 @@ if __name__ == "__main__":
     
     # Display initial time immediately after startup
     try:
-        import time
         time.sleep(2.5)  # Wait for startup message to show
         _matrix_display_run()  # Run once immediately
     except Exception as e:
         print(f"Initial display error: {e}")
+    
+    print("💡 Tip: Changes to .env will be auto-detected and applied")
     
     # Start TCP listener for real-time ADS-B messages
     listener = start_tcp_listener()

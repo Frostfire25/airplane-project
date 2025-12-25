@@ -22,3 +22,6 @@ pyModeS>=2.10
 # Web scraping
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
+
+# Streamlit web interface for configuration
+streamlit>=1.28.0

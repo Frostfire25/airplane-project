@@ -11,6 +11,7 @@ A real-time aircraft tracking system that displays nearby aircraft information o
 - **Distance Calculation**: Shows distance to nearest aircraft from your location
 - **Systemd Service**: Runs automatically on boot as a background service
 - **Multiple Aircraft Tracking**: Rotates through nearby aircraft display
+- **Web Configuration Interface**: Easy-to-use Streamlit web UI for changing settings from any device
 
 ## Hardware Requirements
 
@@ -289,6 +290,64 @@ cd /home/admin/airplane-project/client-5
 sudo -u admin /home/admin/airplane-project/client-5/.venv/bin/python main.py
 ```
 
+## Web Configuration Interface
+
+The project includes a Streamlit-based web interface for easy configuration management from any device on your network.
+
+### Setup Web Config Service
+
+```bash
+# Install the config editor service
+sudo cp airplane-config.service /etc/systemd/system/
+
+# Reload systemd
+sudo systemctl daemon-reload
+
+# Enable and start the service
+sudo systemctl enable airplane-config.service
+sudo systemctl start airplane-config.service
+
+# Check status
+sudo systemctl status airplane-config.service
+```
+
+### Access the Configuration Interface
+
+Once the service is running, access the web interface from any device on your network:
+
+- **Local access**: `http://localhost:8501`
+- **Network access**: `http://<raspberry-pi-ip>:8501`
+
+Example: `http://10.0.0.5:8501`
+
+### Web Interface Features
+
+The configuration editor provides an intuitive interface to manage all settings:
+
+- **📍 Location Tab**: Set your GPS coordinates and timezone
+- **📡 Data Source Tab**: Configure ADS-B receiver connection (host, port, format)
+- **⏱️ Scheduling Tab**: Adjust polling intervals and display timing
+- **🖥️ Display Hardware Tab**: Configure LED matrix settings
+- **🎨 Colors & Brightness Tab**: Customize display colors and brightness levels
+
+**Changes take effect automatically** - no need to restart the airplane.service! The main application uses auto-reload and detects `.env` changes within seconds.
+
+### Managing the Config Service
+
+```bash
+# Stop the config editor
+sudo systemctl stop airplane-config.service
+
+# Restart the config editor
+sudo systemctl restart airplane-config.service
+
+# View config service logs
+sudo journalctl -u airplane-config.service -f
+
+# Disable auto-start on boot
+sudo systemctl disable airplane-config.service
+```
+
 ## Usage
 
 ### Manual Operation
@@ -514,6 +573,7 @@ sudo timedatectl set-timezone America/New_York
 
 After installation, you can access:
 
+- **Config Editor**: `http://<raspberry-pi-ip>:8501` - Airplane tracker configuration interface
 - **readsb/tar1090**: `http://<raspberry-pi-ip>/tar1090/` (`http://10.0.0.5/tar1090/`) - Live aircraft map
 - **FR24 Status**: `http://localhost:8754/index.html` - FlightRadar24 feeder stats (if installed)
 
@@ -525,7 +585,9 @@ client-5/
 ├── adsbfeeder.py              # ADS-B message decoder (pyModeS)
 ├── matrix.py                  # LED matrix display controller
 ├── flightaware.py             # FlightAware web scraper
-├── airplane.service           # Systemd service file
+├── config_editor.py           # Streamlit web configuration interface
+├── airplane.service           # Systemd service file (main app)
+├── airplane-config.service    # Systemd service file (web config)
 ├── requirements.txt           # Python dependencies
 ├── .env                       # Configuration (create from .env.example)
 ├── .env.example              # Example configuration
@@ -594,11 +656,13 @@ For issues and questions:
 3. Test in simulation mode to isolate hardware issues
 4. Verify readsb is receiving data: `nc localhost 30005 | hexdump -C`
 
-## Quick Links
-
-- [Flight Aware Local Page](http://localhost:8754/index.html)
-- [ReadSb Local Page](http://10.0.0.5/tar1090/)
+##**Configuration Editor**: [http://localhost:8501](http://localhost:8501)
+- **Flight Aware Local Page**: [http://localhost:8754/index.html](http://localhost:8754/index.html)
+- **ReadSb Local Page**: [http://10.0.0.5/tar1090/](http://10.0.0.5/tar1090/)
 - [ReadSb Github](https://github.com/wiedehopf/readsb)
 - [pyModeS Documentation](https://pymodes.readthedocs.io/)
+- [FlightAware](https://www.flightaware.com)
+- [RTL-SDR Setup Guide](https://www.rtl-sdr.com/rtl-sdr-quick-start-guide/)
+- [Streamlit Documentation](https://docs.streamlit.io
 - [FlightAware](https://www.flightaware.com)
 - [RTL-SDR Setup Guide](https://www.rtl-sdr.com/rtl-sdr-quick-start-guide/)

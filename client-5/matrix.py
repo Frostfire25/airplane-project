@@ -5,9 +5,14 @@ Displays time and nearest aircraft information on RGB LED matrix.
 
 import os
 import datetime
+import time
+import traceback
 from pathlib import Path
 from typing import Optional, Dict
 import numpy as np
+
+# Import dynamic configuration
+from config import get_config
 
 try:
     from adafruit_blinka_raspberry_pi5_piomatter import PioMatter, Geometry, Orientation, Pinout, Colorspace
@@ -37,34 +42,15 @@ class MatrixDisplay:
             return
         
         MatrixDisplay._initialized = True
-        self.simulate = os.getenv('SIMULATE_MATRIX', '0') == '1' or not MATRIX_AVAILABLE
         
-        # Matrix hardware configuration
-        self.width = int(os.getenv('MATRIX_WIDTH', '64'))
-        self.height = int(os.getenv('MATRIX_HEIGHT', '64'))
-        self.bit_depth = int(os.getenv('MATRIX_BIT_DEPTH', '6'))
-        self.n_addr_lines = int(os.getenv('MATRIX_N_ADDR_LINES', '5'))
+        # Get configuration instance
+        self.config = get_config()
         
-        # Color configuration (RGB tuples)
-        self.color_time = self._parse_color(os.getenv('MATRIX_COLOR_TIME', '255,255,0'))  # Yellow
-        self.color_callsign = self._parse_color(os.getenv('MATRIX_COLOR_CALLSIGN', '0,255,255'))  # Cyan
-        self.color_distance = self._parse_color(os.getenv('MATRIX_COLOR_DISTANCE', '255,165,0'))  # Orange
-        self.color_altitude = self._parse_color(os.getenv('MATRIX_COLOR_ALTITUDE', '0,255,0'))  # Green
-        self.color_speed = self._parse_color(os.getenv('MATRIX_COLOR_SPEED', '255,100,255'))  # Pink
-        self.color_no_aircraft = self._parse_color(os.getenv('MATRIX_COLOR_NO_AIRCRAFT', '255,0,0'))  # Red
-        self.color_border = self._parse_color(os.getenv('MATRIX_COLOR_BORDER', '100,100,100'))  # Gray
-        
-        # Brightness configuration
-        self.brightness_max = int(os.getenv('MATRIX_BRIGHTNESS_MAX', '255'))
-        self.brightness_min = int(os.getenv('MATRIX_BRIGHTNESS_MIN', '50'))
-        self.color_border = self._parse_color(os.getenv('MATRIX_COLOR_BORDER', '100,100,100'))  # Gray
+        # Check simulate mode
+        self.simulate = self.config.get('SIMULATE_MATRIX', '0', str) == '1' or not MATRIX_AVAILABLE
         
         # Font paths - look in the fonts folder next to this file
         self.font_dir = Path(__file__).parent / 'fonts'
-        
-        # Animation configuration
-        self.animation_delay = int(os.getenv('MATRIX_ANIMATION_DELAY_MS', '300')) / 1000.0  # Convert ms to seconds
-        self.scramble_opacity = int(os.getenv('MATRIX_SCRAMBLE_OPACITY', '20')) / 100.0  # Convert percentage to factor
         
         # Initialize matrix hardware
         self.matrix = None
@@ -75,6 +61,49 @@ class MatrixDisplay:
             self._init_hardware()
         else:
             print("Matrix Display: Running in SIMULATION mode")
+    
+    def _get_config_values(self):
+        """Get current configuration values (refreshes if .env changed)."""
+        # Matrix hardware configuration - dynamically fetched
+        width = self.config.get('MATRIX_WIDTH', 64, int)
+        height = self.config.get('MATRIX_HEIGHT', 64, int)
+        bit_depth = self.config.get('MATRIX_BIT_DEPTH', 6, int)
+        n_addr_lines = self.config.get('MATRIX_N_ADDR_LINES', 5, int)
+        
+        # Color configuration (RGB tuples)
+        color_time = self.config.get_color('MATRIX_COLOR_TIME', (255, 255, 255))
+        color_callsign = self.config.get_color('MATRIX_COLOR_CALLSIGN', (255, 255, 255))
+        color_distance = self.config.get_color('MATRIX_COLOR_DISTANCE', (255, 255, 255))
+        color_altitude = self.config.get_color('MATRIX_COLOR_ALTITUDE', (255, 255, 255))
+        color_speed = self.config.get_color('MATRIX_COLOR_SPEED', (255, 255, 255))
+        color_no_aircraft = self.config.get_color('MATRIX_COLOR_NO_AIRCRAFT', (255, 255, 255))
+        color_border = self.config.get_color('MATRIX_COLOR_BORDER', (100, 100, 100))
+        
+        # Brightness configuration
+        brightness_max = self.config.get('MATRIX_BRIGHTNESS_MAX', 255, int)
+        brightness_min = self.config.get('MATRIX_BRIGHTNESS_MIN', 100, int)
+        
+        # Animation configuration
+        animation_delay = self.config.get('MATRIX_ANIMATION_DELAY_MS', 500, int) / 1000.0
+        scramble_opacity = self.config.get('MATRIX_SCRAMBLE_OPACITY', 65, int) / 100.0
+        
+        return {
+            'width': width,
+            'height': height,
+            'bit_depth': bit_depth,
+            'n_addr_lines': n_addr_lines,
+            'color_time': color_time,
+            'color_callsign': color_callsign,
+            'color_distance': color_distance,
+            'color_altitude': color_altitude,
+            'color_speed': color_speed,
+            'color_no_aircraft': color_no_aircraft,
+            'color_border': color_border,
+            'brightness_max': brightness_max,
+            'brightness_min': brightness_min,
+            'animation_delay': animation_delay,
+            'scramble_opacity': scramble_opacity,
+        }
     
     def _parse_color(self, color_str: str) -> tuple:
         """Parse color string 'R,G,B' to tuple."""
@@ -90,6 +119,11 @@ class MatrixDisplay:
     
     def _calculate_brightness_factor(self, current_time: datetime.datetime) -> float:
         """Calculate brightness factor based on time of day (0.0 to 1.0)."""
+        # Get current config values
+        cfg = self._get_config_values()
+        brightness_max = cfg['brightness_max']
+        brightness_min = cfg['brightness_min']
+        
         # Get hour as decimal (e.g., 13.5 for 1:30 PM)
         hour_decimal = current_time.hour + current_time.minute / 60.0
         
@@ -100,26 +134,31 @@ class MatrixDisplay:
         # Maximum distance from noon is 12 hours
         # At noon: distance = 0, brightness = max
         # At midnight: distance = 12, brightness = min
-        brightness_range = self.brightness_max - self.brightness_min
-        brightness = self.brightness_max - (distance_from_noon / 12.0) * brightness_range
+        brightness_range = brightness_max - brightness_min
+        brightness = brightness_max - (distance_from_noon / 12.0) * brightness_range
         
         # Return as factor (0.0 to 1.0)
         return brightness / 255.0
     
     def _draw_border(self, draw, brightness_factor: float = 1.0):
         """Draw a 1-pixel border around the entire display."""
-        border_color = self._apply_brightness(self.color_border, brightness_factor)
+        cfg = self._get_config_values()
+        border_color = self._apply_brightness(cfg['color_border'], brightness_factor)
+        width = cfg['width']
+        height = cfg['height']
         # Top border
-        draw.line([(0, 0), (self.width - 1, 0)], fill=border_color)
+        draw.line([(0, 0), (width - 1, 0)], fill=border_color)
         # Bottom border
-        draw.line([(0, self.height - 1), (self.width - 1, self.height - 1)], fill=border_color)
+        draw.line([(0, height - 1), (width - 1, height - 1)], fill=border_color)
         # Left border
-        draw.line([(0, 0), (0, self.height - 1)], fill=border_color)
+        draw.line([(0, 0), (0, height - 1)], fill=border_color)
         # Right border
-        draw.line([(self.width - 1, 0), (self.width - 1, self.height - 1)], fill=border_color)
+        draw.line([(width - 1, 0), (width - 1, height - 1)], fill=border_color)
     
     def _center_text(self, text: str, font) -> int:
         """Calculate x position to center text."""
+        cfg = self._get_config_values()
+        width = cfg['width']
         try:
             # Try to get actual text width from font
             bbox = font.getbbox(text)
@@ -127,15 +166,21 @@ class MatrixDisplay:
         except:
             # Fallback to estimation
             text_width = len(text) * 6
-        return (self.width - text_width) // 2
+        return (width - text_width) // 2
     
     def _init_hardware(self):
         """Initialize the LED matrix hardware."""
         try:
-            print(f"Matrix Display: Attempting hardware init {self.width}x{self.height}...")
+            cfg = self._get_config_values()
+            width = cfg['width']
+            height = cfg['height']
+            bit_depth = cfg['bit_depth']
+            n_addr_lines = cfg['n_addr_lines']
+            
+            print(f"Matrix Display: Attempting hardware init {width}x{height}...")
             
             # Create PIL Image as framebuffer
-            self.canvas = Image.new('RGB', (self.width, self.height), (0, 0, 0))
+            self.canvas = Image.new('RGB', (width, height), (0, 0, 0))
             print("Matrix Display: Canvas created")
             
             # Create numpy array from PIL image for PioMatter - use + 0 to make mutable copy
@@ -148,12 +193,12 @@ class MatrixDisplay:
             
             # Create geometry
             geometry = Geometry(
-                width=self.width,
-                height=self.height,
-                n_addr_lines=self.n_addr_lines,
+                width=width,
+                height=height,
+                n_addr_lines=n_addr_lines,
                 rotation=Orientation.Normal
             )
-            print(f"Matrix Display: Geometry created: {self.width}x{self.height}, n_addr={self.n_addr_lines}")
+            print(f"Matrix Display: Geometry created: {width}x{height}, n_addr={n_addr_lines}")
             
             # Configure matrix with Active3 pinout (for Waveshare/Seeed bonnets)
             print("Matrix Display: Initializing PioMatter...")
@@ -234,10 +279,15 @@ class MatrixDisplay:
             delay: Delay before revealing each character (seconds)
             brightness_factor: Factor to adjust color brightness (0.0 to 1.0)
         """
+        # Get current config
+        cfg = self._get_config_values()
+        width = cfg['width']
+        height = cfg['height']
+        
         # Apply brightness factor to color
         color = self._apply_brightness(color, brightness_factor)
+        
         import random
-        import time
         
         # Characters to use for scrambling effect
         scramble_chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:-'
@@ -256,7 +306,7 @@ class MatrixDisplay:
             # Rapidly scramble before revealing this character
             for flip in range(num_flips):
                 # Clear canvas and redraw from scratch
-                self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+                self.canvas = Image.new("RGB", (width, height), (0, 0, 0))
                 draw = ImageDraw.Draw(self.canvas)
                 
                 # Draw border first
@@ -294,8 +344,9 @@ class MatrixDisplay:
                     except:
                         scramble_x = x + len(revealed_text) * 6
                     
-                    # Apply opacity to color for scrambling characters
-                    scramble_color = tuple(int(c * self.scramble_opacity) for c in color)
+                    # Apply scramble opacity from config
+                    scramble_opacity = cfg['scramble_opacity']
+                    scramble_color = self._apply_brightness(color, scramble_opacity)
                     draw.text((scramble_x, y), scramble_text, fill=scramble_color, font=font)
                 
                 # Update framebuffer and display
@@ -310,7 +361,7 @@ class MatrixDisplay:
                 time.sleep(flip_rate)
             
             # Now reveal the character by drawing it one final time
-            self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+            self.canvas = Image.new("RGB", (width, height), (0, 0, 0))
             draw = ImageDraw.Draw(self.canvas)
             
             # Draw border first
@@ -348,8 +399,9 @@ class MatrixDisplay:
         
         if self.canvas and self.matrix:
             try:
+                cfg = self._get_config_values()
                 # Create a fresh black canvas
-                self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+                self.canvas = Image.new("RGB", (cfg['width'], cfg['height']), (0, 0, 0))
                 
                 # Update framebuffer with the cleared canvas
                 self.framebuffer[:] = np.asarray(self.canvas)
@@ -378,8 +430,13 @@ class MatrixDisplay:
             return
         
         try:
+            # Get current config
+            cfg = self._get_config_values()
+            width = cfg['width']
+            height = cfg['height']
+            
             # Create a fresh canvas
-            self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+            self.canvas = Image.new("RGB", (width, height), (0, 0, 0))
             draw = ImageDraw.Draw(self.canvas)
             
             # Calculate brightness factor based on time of day
@@ -397,7 +454,7 @@ class MatrixDisplay:
             
             # Always draw border and time (even when no aircraft)
             self._draw_border(draw, brightness_factor)
-            adjusted_color = self._apply_brightness(self.color_time, brightness_factor)
+            adjusted_color = self._apply_brightness(cfg['color_time'], brightness_factor)
             self._draw_text(draw, time_str, x_pos, 4, adjusted_color, font)
             revealed_elements.append((time_str, x_pos, 4, adjusted_color, font))
             
@@ -412,10 +469,10 @@ class MatrixDisplay:
                     
                     # Center the callsign
                     callsign_width = len(callsign) * 6  # Estimate 6 pixels per character for medium font
-                    callsign_x = (self.width - callsign_width) // 2
+                    callsign_x = (width - callsign_width) // 2
                     
-                    self._draw_text_animated(callsign, callsign_x, y_offset, self.color_callsign, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
-                    adjusted_callsign_color = self._apply_brightness(self.color_callsign, brightness_factor)
+                    self._draw_text_animated(callsign, callsign_x, y_offset, cfg['color_callsign'], self._get_font('medium-small'), revealed_elements, delay=cfg['animation_delay'], brightness_factor=brightness_factor)
+                    adjusted_callsign_color = self._apply_brightness(cfg['color_callsign'], brightness_factor)
                     revealed_elements.append((callsign, callsign_x, y_offset, adjusted_callsign_color, self._get_font('medium-small')))
                     y_offset += 12
                 
@@ -433,10 +490,10 @@ class MatrixDisplay:
                         
                         # Center the route
                         route_width = len(route_str) * 6  # Estimate 6 pixels per character
-                        route_x = (self.width - route_width) // 2
+                        route_x = (width - route_width) // 2
                         
-                        self._draw_text_animated(route_str, route_x, y_offset, self.color_callsign, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
-                        adjusted_route_color = self._apply_brightness(self.color_callsign, brightness_factor)
+                        self._draw_text_animated(route_str, route_x, y_offset, cfg['color_callsign'], self._get_font('medium-small'), revealed_elements, delay=cfg['animation_delay'], brightness_factor=brightness_factor)
+                        adjusted_route_color = self._apply_brightness(cfg['color_callsign'], brightness_factor)
                         revealed_elements.append((route_str, route_x, y_offset, adjusted_route_color, self._get_font('medium-small')))
                         y_offset += 12
                 
@@ -450,9 +507,9 @@ class MatrixDisplay:
                     
                     # Center the distance
                     dist_width = len(dist_str) * 6  # Estimate 6 pixels per character
-                    dist_x = (self.width - dist_width) // 2
+                    dist_x = (width - dist_width) // 2
                     
-                    self._draw_text_animated(dist_str, dist_x, y_offset, self.color_distance, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
+                    self._draw_text_animated(dist_str, dist_x, y_offset, cfg['color_distance'], self._get_font('medium-small'), revealed_elements, delay=cfg['animation_delay'], brightness_factor=brightness_factor)
                 else:
                     # No position data - show altitude and speed instead
                     if altitude is not None:
@@ -460,10 +517,10 @@ class MatrixDisplay:
                         
                         # Center the altitude
                         alt_width = len(alt_str) * 6
-                        alt_x = (self.width - alt_width) // 2
+                        alt_x = (width - alt_width) // 2
                         
-                        self._draw_text_animated(alt_str, alt_x, y_offset, self.color_altitude, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
-                        adjusted_alt_color = self._apply_brightness(self.color_altitude, brightness_factor)
+                        self._draw_text_animated(alt_str, alt_x, y_offset, cfg['color_altitude'], self._get_font('medium-small'), revealed_elements, delay=cfg['animation_delay'], brightness_factor=brightness_factor)
+                        adjusted_alt_color = self._apply_brightness(cfg['color_altitude'], brightness_factor)
                         revealed_elements.append((alt_str, alt_x, y_offset, adjusted_alt_color, self._get_font('medium-small')))
                         y_offset += 12
                     
@@ -472,9 +529,9 @@ class MatrixDisplay:
                         
                         # Center the speed
                         spd_width = len(spd_str) * 6
-                        spd_x = (self.width - spd_width) // 2
+                        spd_x = (width - spd_width) // 2
                         
-                        self._draw_text_animated(spd_str, spd_x, y_offset, self.color_speed, self._get_font('medium-small'), revealed_elements, delay=self.animation_delay, brightness_factor=brightness_factor)
+                        self._draw_text_animated(spd_str, spd_x, y_offset, cfg['color_speed'], self._get_font('medium-small'), revealed_elements, delay=cfg['animation_delay'], brightness_factor=brightness_factor)
             # If no aircraft_data, just show border and time (already drawn above)
             
             # Single update after all text is drawn
@@ -543,10 +600,10 @@ class MatrixDisplay:
             return
         
         try:
-            draw = ImageDraw.Draw(self.canvas)
+            cfg = self._get_config_values()
             
             # Create fresh canvas
-            self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+            self.canvas = Image.new("RGB", (cfg['width'], cfg['height']), (0, 0, 0))
             draw = ImageDraw.Draw(self.canvas)
             
             # Draw startup message
@@ -557,9 +614,8 @@ class MatrixDisplay:
             self.framebuffer[:] = np.asarray(self.canvas)
             self.matrix.show()
             
-            import time
+            time.sleep(2)
         except Exception as e:
-            import traceback
             print(f"Matrix startup message error: {e}")
             print(f"Traceback: {traceback.format_exc()}")
     
