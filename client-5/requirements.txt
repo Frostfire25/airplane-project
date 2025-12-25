@@ -1,11 +1,24 @@
-python-dotenv
-requests
-pydantic>=1.10
-apscheduler>=3.10
-python-dateutil
+# Core dependencies
+python-dotenv>=1.0.0
+requests>=2.31.0
+pydantic>=1.10,<3.0
+
+# Scheduling
+apscheduler>=3.10,<4.0
+
+# Date/time handling
+python-dateutil>=2.8.0
+
+# LED Matrix display (custom Raspberry Pi 5 version)
 Adafruit-Blinka-Raspberry-Pi5-Piomatter
-numpy
-Pillow
-pyModeS
-beautifulsoup4
-requests
+
+# Image processing and matrix operations
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# ADS-B decoding
+pyModeS>=2.10
+
+# Web scraping
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
