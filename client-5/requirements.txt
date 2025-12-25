@@ -6,3 +6,6 @@ python-dateutil
 Adafruit-Blinka-Raspberry-Pi5-Piomatter
 numpy
 Pillow
+pyModeS
+beautifulsoup4
+requests
