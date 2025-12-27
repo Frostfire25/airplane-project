@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
+ENV/
+
+# Environment and secrets
+.env
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+rpi-rgb-led-matrix/
+*.bak
+output.error
+
+# Temporary test files
+test_output/
